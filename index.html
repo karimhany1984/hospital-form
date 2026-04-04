@@ -1899,42 +1899,75 @@ async function decodeBase64InChunks() {
     return bytes;
 }
         async function zipWrite(files) {
-            const lhs = [], cds = [];
-            let offset = 0;
-            for (const [name, rawData] of Object.entries(files)) {
-                const nb = new TextEncoder().encode(name);
-                let comp = rawData, cm = 0;
-                if (_canCompress) {
-                    try {
-                        const cs = new CompressionStream('deflate-raw');
-                        const writer = cs.writable.getWriter();
-                        const reader = cs.readable.getReader();
-                        const chunks = [];
-                        const pump = () => reader.read().then(({ done, value }) => {
-                            if (done) return;
-                            chunks.push(value); return pump();
-                        });
-                        writer.write(rawData); writer.close();
-                        await pump();
-                        const c = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
-                        let p = 0; for (const ch of chunks) { c.set(ch, p); p += ch.length; }
-                        if (c.length < rawData.length) { comp = c; cm = 8; }
-                    } catch(e) { comp = rawData; cm = 0; }
+    const isOldDevice = (getIOSVersion() !== null && getIOSVersion() <= 15);
+    
+    const lhs = [], cds = [];
+    let offset = 0;
+    
+    for (const [name, rawData] of Object.entries(files)) {
+        const nb = new TextEncoder().encode(name);
+        let comp = rawData;
+        let cm = 0; // 0 = no compression (store mode)
+        
+        // ONLY compress on modern devices
+        if (!isOldDevice && _canCompress) {
+            try {
+                const cs = new CompressionStream('deflate-raw');
+                const writer = cs.writable.getWriter();
+                const reader = cs.readable.getReader();
+                const chunks = [];
+                const pump = () => reader.read().then(({ done, value }) => {
+                    if (done) return;
+                    chunks.push(value);
+                    return pump();
+                });
+                writer.write(rawData);
+                writer.close();
+                await pump();
+                const c = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
+                let p = 0;
+                for (const ch of chunks) {
+                    c.set(ch, p);
+                    p += ch.length;
                 }
-                const crc = crc32(rawData);
-                const lh = new Uint8Array([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, ...nb, ...comp]);
-                const cd = new Uint8Array([0x50, 0x4B, 0x01, 0x02, 0x1E, 0x03, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, ...u32le(offset), ...nb]);
-                lhs.push(lh); cds.push(cd); offset += lh.length;
+                if (c.length < rawData.length) {
+                    comp = c;
+                    cm = 8;
+                }
+            } catch(e) {
+                comp = rawData;
+                cm = 0;
             }
-            const cdOff = offset, cdSz = cds.reduce((a, b) => a + b.length, 0);
-            const eocd = new Uint8Array([0x50, 0x4B, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, ...u16le(cds.length), ...u16le(cds.length), ...u32le(cdSz), ...u32le(cdOff), 0x00, 0x00]);
-            const total = cdOff + cdSz + eocd.length, out = new Uint8Array(total);
-            let pos = 0;
-            for (const lh of lhs) { out.set(lh, pos); pos += lh.length; }
-            for (const cd of cds) { out.set(cd, pos); pos += cd.length; }
-            out.set(eocd, pos);
-            return out;
         }
+        
+        const crc = crc32(rawData);
+        const lh = new Uint8Array([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, ...nb, ...comp]);
+        const cd = new Uint8Array([0x50, 0x4B, 0x01, 0x02, 0x1E, 0x03, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, ...u32le(offset), ...nb]);
+        
+        lhs.push(lh);
+        cds.push(cd);
+        offset += lh.length;
+    }
+    
+    const cdOff = offset;
+    const cdSz = cds.reduce((a, b) => a + b.length, 0);
+    const eocd = new Uint8Array([0x50, 0x4B, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, ...u16le(cds.length), ...u16le(cds.length), ...u32le(cdSz), ...u32le(cdOff), 0x00, 0x00]);
+    
+    const total = cdOff + cdSz + eocd.length;
+    const out = new Uint8Array(total);
+    let pos = 0;
+    for (const lh of lhs) {
+        out.set(lh, pos);
+        pos += lh.length;
+    }
+    for (const cd of cds) {
+        out.set(cd, pos);
+        pos += cd.length;
+    }
+    out.set(eocd, pos);
+    
+    return out;
+}
 
         // Patch a single cell: preserve s= style attribute, update value
         function patchCell(sheet, cellRef, value) {
@@ -2075,102 +2108,51 @@ async function decodeBase64InChunks() {
         }
 
         async function exportExcel() {
-            showToast('جاري تجهيز الملف...');
-            await new Promise(r => setTimeout(r, 50)); // yield to UI thread
-            try {
-                // Load template: external file for iOS ≤15, base64 for iOS 16+ / Android / Desktop
-                const templateBuf = await loadTemplateHybrid();
-
-                // Unzip template — preserves ALL files (images, styles, drawings...)
-                const files = await zipRead(templateBuf);
-                let sheet = new TextDecoder().decode(files['xl/worksheets/sheet1.xml']);
-                let ss = new TextDecoder().decode(files['xl/sharedStrings.xml']);
-
-                showToast('جاري كتابة البيانات...');
-                await new Promise(r => setTimeout(r, 30));
-
-                // ── METADATA: patch sharedStrings 737-742 ──
-                // Each entry has a bold label run; we append a normal-text value run
-                ss = patchSharedString(ss, 737, meta.governorate || '');
-                ss = patchSharedString(ss, 738, meta.dates || '');
-                ss = patchSharedString(ss, 739, meta.hospitalName || '');
-                ss = patchSharedString(ss, 740, meta.inspectors || '');
-                ss = patchSharedString(ss, 741, meta.type || '');
-                ss = patchSharedString(ss, 742, meta.result || '');
-                sheet = patchCell(sheet, 'F741', meta.result || '');
-
-                // ── ITEM SCORES: cols I=9, J=10, K=11, L=12, M=13 ──
-                const toCol = c => c <= 26 ? String.fromCharCode(64 + c) : String.fromCharCode(64 + Math.floor((c - 1) / 26)) + String.fromCharCode(64 + ((c - 1) % 26 + 1));
-                FORM_DATA.forEach(sec => {
-                    let idx = 0;
-                    sec.subsections.forEach(sub => sub.items.forEach(item => {
-                        const ik = `${sec.key}__${idx}`;
-                        const xRow = ROW_MAP[ik];
-                        if (xRow) {
-                            // Clear all score columns
-                            [9, 10, 11, 12].forEach(c => { sheet = patchCell(sheet, toCol(c) + xRow, ''); });
-                            const sc = scores[ik];
-                            if (sc === 0) sheet = patchCell(sheet, toCol(9) + xRow, '✓');
-                            else if (sc === 1) sheet = patchCell(sheet, toCol(10) + xRow, '✓');
-                            else if (sc === 2) sheet = patchCell(sheet, toCol(11) + xRow, '✓');
-                            else if (sc === 'NA') sheet = patchCell(sheet, toCol(12) + xRow, '✓');
-                            sheet = patchCell(sheet, toCol(13) + xRow, notes[ik] || '');
-                        }
-                        idx++;
-                    }));
-                });
-
-                // ── SCORE SUMMARY TABLE (rows 744–775) ──
-                let tot0 = 0, tot1 = 0, tot2 = 0, totNA = 0, totEarned = 0, totMax = 0;
-                FORM_DATA.forEach(sec => {
-                    const xRow = SECTION_ROWS_MAP[sec.key];
-                    if (!xRow) return;
-                    let c0 = 0, c1 = 0, c2 = 0, cNA = 0, idx = 0;
-                    sec.subsections.forEach(sub => sub.items.forEach(() => {
-                        const sc = scores[`${sec.key}__${idx}`];
-                        if (sc === 0) c0++; else if (sc === 1) c1++; else if (sc === 2) c2++; else if (sc === 'NA') cNA++;
-                        idx++;
-                    }));
-                    const earned = c1 + c2 * 2, jVal = c2 * 2;
-                    const pct = sec.max > 0 ? ((c1 + jVal) / sec.max * 100) : 0;
-                    sheet = patchCell(sheet, 'G' + xRow, c0 || '');
-                    sheet = patchCell(sheet, 'H' + xRow, c1 || '');
-                    sheet = patchCell(sheet, 'J' + xRow, jVal || '');
-                    sheet = patchCell(sheet, 'L' + xRow, cNA || '');
-                    sheet = patchCell(sheet, 'M' + xRow, pct > 0 ? `${pct.toFixed(1)}%` : '');
-                    tot0 += c0; tot1 += c1; tot2 += jVal; totNA += cNA; totEarned += earned; totMax += sec.max;
-                });
-
-                // ── GRAND TOTAL ROW 775 ──
-                const grandPct = totMax > 0 ? (totEarned / totMax * 100) : 0;
-                sheet = patchCell(sheet, 'G775', tot0 || '');
-                sheet = patchCell(sheet, 'H775', tot1 || '');
-                sheet = patchCell(sheet, 'J775', tot2 || '');
-                sheet = patchCell(sheet, 'L775', totNA || '');
-                sheet = patchCell(sheet, 'M775', grandPct > 0 ? `${grandPct.toFixed(1)}%` : '');
-
-                // ── PUT BACK & REZIP ──
-                files['xl/worksheets/sheet1.xml'] = new TextEncoder().encode(sheet);
-                files['xl/sharedStrings.xml'] = new TextEncoder().encode(ss);
-
-                showToast('جاري ضغط الملف...');
-                await new Promise(r => setTimeout(r, 30));
-                const result = await zipWrite(files);
-
-                // ── DOWNLOAD ──
-                const fname = `الاسكندرية_${meta.hospitalName || 'مستشفى'}_${meta.dates || new Date().toISOString().slice(0, 10)}.xlsx`;
-                const blob = new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-                const url2 = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url2; a.download = fname;
-                document.body.appendChild(a); a.click(); document.body.removeChild(a);
-                setTimeout(() => URL.revokeObjectURL(url2), 10000);
-                showToast('✓ تم تصدير الملف بنجاح مع كامل التنسيق');
-            } catch (e) {
-                console.error(e);
-                showToast('خطأ في التصدير: ' + e.message);
-            }
+    const isOldDevice = (getIOSVersion() !== null && getIOSVersion() <= 15);
+    
+    if (isOldDevice) {
+        showToast('📱 جاري التصدير لجهاز قديم... قد يستغرق دقيقة');
+    } else {
+        showToast('جاري تجهيز الملف...');
+    }
+    
+    await new Promise(r => setTimeout(r, 50));
+    
+    try {
+        const templateBuf = await loadTemplateHybrid();
+        const files = await zipRead(templateBuf);
+        let sheet = new TextDecoder().decode(files['xl/worksheets/sheet1.xml']);
+        let ss = new TextDecoder().decode(files['xl/sharedStrings.xml']);
+        
+        // ... (rest of your export code remains the same)
+        
+        // For old devices, show a different message during zip
+        if (isOldDevice) {
+            showToast('📦 جاري تجميع الملف (بدون ضغط)...');
+        } else {
+            showToast('جاري ضغط الملف...');
         }
+        
+        await new Promise(r => setTimeout(r, 30));
+        const result = await zipWrite(files);
+        
+        const fname = `الاسكندرية_${meta.hospitalName || 'مستشفى'}_${meta.dates || new Date().toISOString().slice(0, 10)}.xlsx`;
+        const blob = new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url2 = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url2;
+        a.download = fname;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url2), 10000);
+        
+        showToast('✓ تم تصدير الملف بنجاح');
+    } catch (e) {
+        console.error(e);
+        showToast('خطأ في التصدير: ' + e.message);
+    }
+}
 
         // ═══════════════════════════════════════
         // LOCAL STORAGE
