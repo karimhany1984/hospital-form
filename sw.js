@@ -52,7 +52,7 @@ self.addEventListener('fetch', e => {
                     // If the specific page isn't found (like a broken link), 
                     // default to the main form form
                     if (e.request.mode === 'navigate') {
-                        return caches.match(BASE + '1.html');
+                        return caches.match('1.html');
                     }
                 });
             })
