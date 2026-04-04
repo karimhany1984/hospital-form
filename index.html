@@ -53,7 +53,7 @@ body { font-family: 'Segoe UI', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-seri
         --shadow-lg: 0 4px 24px rgba(26,111,175,0.15);
         --radius: 12px;
         --radius-sm: 8px;
-        --header-h: 60px;
+        --header-h: calc(60px + env(safe-area-inset-top, 0px));
         --safe-area-bottom: env(safe-area-inset-bottom, 0px);
         --mob-nav-h: calc(58px + var(--safe-area-bottom));
     }
@@ -97,7 +97,7 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 16px;
+  padding: env(safe-area-inset-top, 0px) 16px 0 16px;
   z-index: 200;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
@@ -1329,7 +1329,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
       <input type="text" id="inspectors" name="inspectors" placeholder="اسم القائم بالمرور" value="${esc(meta.inspectors)}" oninput="meta.inspectors=this.value;debounceSave()">
 </div>
               <div class="meta-field">
-      <label for="dates">تواريخ التقييم</label>
+      <label for="dates">تاريخ التقييم</label>
       <input type="date" id="dates" name="dates" value="${esc(meta.dates)}" oninput="meta.dates=this.value;debounceSave()">
 </div>
               <div class="meta-field">
@@ -1657,7 +1657,32 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
         function u32le(v) { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v, true); return b; }
 
         async function decompDeflate(data) {
-            if (typeof DecompressionStream !== 'undefined') { try { const ds = new DecompressionStream('deflate-raw'); const w = ds.writable.getWriter(), r = ds.readable.getReader(); w.write(data); w.close(); const ch = []; while (true) { const { done, value } = await r.read(); if (done) break; ch.push(value); } const o = new Uint8Array(ch.reduce((a, b) => a + b.length, 0)); let p = 0; for (const c of ch) { o.set(c, p); p += c.length; } return o; } catch (e) { } }
+            if (typeof DecompressionStream !== 'undefined') {
+                try {
+                    const result = await new Promise((resolve, reject) => {
+                        const timer = setTimeout(() => reject(new Error('timeout')), 3000);
+                        try {
+                            const ds = new DecompressionStream('deflate-raw');
+                            const writer = ds.writable.getWriter();
+                            const reader = ds.readable.getReader();
+                            const chunks = [];
+                            function pump() {
+                                reader.read().then(({ done, value }) => {
+                                    if (done) {
+                                        clearTimeout(timer);
+                                        const out = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
+                                        let p = 0; for (const c of chunks) { out.set(c, p); p += c.length; }
+                                        resolve(out);
+                                    } else { chunks.push(value); pump(); }
+                                }).catch(e => { clearTimeout(timer); reject(e); });
+                            }
+                            pump();
+                            writer.write(data).then(() => writer.close()).catch(e => { clearTimeout(timer); reject(e); });
+                        } catch(e) { clearTimeout(timer); reject(e); }
+                    });
+                    return result;
+                } catch(e) { /* fall through to pure-JS */ }
+            }
             // Pure-JS DEFLATE fallback for iOS Safari < 16.4
             function rb(d, pos) { return function (n) { let v = 0; for (let i = 0; i < n; i++) { v |= ((d[pos[0] >> 3] >> (pos[0] & 7)) & 1) << i; pos[0]++; } return v; } }
             const pos = [0], read = rb(data, pos);
@@ -1703,10 +1728,37 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
         async function zipWrite(files) {
             const lhs = [], cds = [];
             let offset = 0;
+            // iOS 12 / older Safari: CompressionStream exists but may hang,
+            // so we use a race-with-timeout and fall back to store (no compression).
+            async function tryCompress(rawData) {
+                if (typeof CompressionStream === 'undefined') return null;
+                return new Promise(resolve => {
+                    const timer = setTimeout(() => resolve(null), 2000); // 2s timeout
+                    try {
+                        const cs = new CompressionStream('deflate-raw');
+                        const writer = cs.writable.getWriter();
+                        const reader = cs.readable.getReader();
+                        const chunks = [];
+                        function pump() {
+                            reader.read().then(({ done, value }) => {
+                                if (done) {
+                                    clearTimeout(timer);
+                                    const out = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
+                                    let p = 0; for (const c of chunks) { out.set(c, p); p += c.length; }
+                                    resolve(out);
+                                } else { chunks.push(value); pump(); }
+                            }).catch(() => { clearTimeout(timer); resolve(null); });
+                        }
+                        pump();
+                        writer.write(rawData).then(() => writer.close()).catch(() => { clearTimeout(timer); resolve(null); });
+                    } catch(e) { clearTimeout(timer); resolve(null); }
+                });
+            }
             for (const [name, rawData] of Object.entries(files)) {
                 const nb = new TextEncoder().encode(name);
                 let comp = rawData, cm = 0;
-                if (typeof CompressionStream !== 'undefined') { try { const cs = new CompressionStream('deflate-raw'); const w = cs.writable.getWriter(), r = cs.readable.getReader(); w.write(rawData); w.close(); const ch = []; while (true) { const { done, value } = await r.read(); if (done) break; ch.push(value); } comp = new Uint8Array(ch.reduce((a, b) => a + b.length, 0)); let p2 = 0; for (const c of ch) { comp.set(c, p2); p2 += c.length; } cm = 8; } catch (e) { comp = rawData; cm = 0; } }
+                const compressed = await tryCompress(rawData);
+                if (compressed && compressed.length < rawData.length) { comp = compressed; cm = 8; }
                 const crc = crc32(rawData);
                 const lh = new Uint8Array([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, ...nb, ...comp]);
                 const cd = new Uint8Array([0x50, 0x4B, 0x01, 0x02, 0x1E, 0x03, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, ...u32le(offset), ...nb]);
@@ -1811,7 +1863,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
                 meta.governorate = stripLabel(gov, 'المحافظة') || 'الاسكندرية';
 
                 const dates = readCell(739, 6);
-                meta.dates = stripLabel(dates, 'تواريخ التقييم', 'تواريخ التقيم');
+                meta.dates = stripLabel(dates, 'تواريخ التقييم', 'تاريخ التقييم', 'تاريخ التقيم', 'تواريخ التقيم');
 
                 const hosp = readCell(740, 3);
                 meta.hospitalName = stripLabel(hosp, 'إسم المستشفي', 'اسم المستشفى', 'اسم المستشفي', 'إسم المستشفى');
