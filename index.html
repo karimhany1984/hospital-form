@@ -1748,15 +1748,15 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
         // ═══════════════════════════════════════
         // HYBRID TEMPLATE LOADER
         // ═══════════════════════════════════════
-               async function loadTemplateHybrid() {
-    // On iPhone 6 and similar old devices, we MUST use the base64 method
-    // BUT we need to decode it in chunks to avoid "Out of memory"
-    
+             async function loadTemplateHybrid() {
     const iosVersion = getIOSVersion();
     const isOldDevice = (iosVersion !== null && iosVersion <= 15);
     
+    // OLD DEVICES (iPhone 6, etc.) - ALWAYS use Base64, NEVER fetch
     if (isOldDevice) {
-        showToast('⚙️ جاري التجهيز للأجهزة القديمة...');
+        showToast('⚙️ جاري تجهيز القالب للجهاز القديم...');
+        
+        // Small delay to let UI update
         await new Promise(r => setTimeout(r, 50));
         
         try {
@@ -1771,9 +1771,9 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
                 for (let j = 0; j < chunk.length; j++) {
                     bytes[i + j] = chunk.charCodeAt(j);
                 }
-                // Small pause to let the event loop breathe (prevents UI freeze)
+                // Yield to UI every 50,000 chars
                 if (i % 50000 === 0 && i > 0) {
-                    await new Promise(r => setTimeout(r, 5));
+                    await new Promise(r => setTimeout(r, 10));
                 }
             }
             
@@ -1781,20 +1781,18 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
             return bytes;
         } catch (e) {
             console.error("Base64 decode failed:", e);
-            showToast('⚠️ خطأ في التحميل، جاري المحاولة مرة أخرى');
-            // If still fails, try external fetch as last resort
-            const response = await fetch('./template.xlsx');
-            if (!response.ok) throw new Error('تعذّر تحميل القالب');
-            return new Uint8Array(await response.arrayBuffer());
+            showToast('❌ خطأ في التحميل');
+            throw new Error('Failed to load template on old device');
         }
     }
     
-    // Modern devices: use base64 (fast)
-    showToast('⚡ وضع الأداء السريع');
-    await new Promise(r => setTimeout(r, 40));
+    // MODERN DEVICES (iOS 16+, Android, Desktop) - Use Base64 (fast)
+    showToast('⚡ جاري التحميل...');
     const binary = atob(TEMPLATE_B64);
     const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
     return bytes;
 }
         async function zipWrite(files) {
