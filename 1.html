@@ -1798,20 +1798,29 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
                     return vMatch[1];
                 };
 
+                // Helper: strip any known label prefix (with or without colon/space)
+                const stripLabel = (val, ...labels) => {
+                    let v = val;
+                    for (const lbl of labels) {
+                        v = v.replace(new RegExp(lbl + '\\s*[::؛]?\\s*'), '');
+                    }
+                    return v.trim();
+                };
+
                 const gov = readCell(739, 3);
-                meta.governorate = gov.replace(/المحافظة\s*[::]/, '').trim() || 'الاسكندرية';
+                meta.governorate = stripLabel(gov, 'المحافظة') || 'الاسكندرية';
 
                 const dates = readCell(739, 6);
-                meta.dates = dates.replace(/تاريخ التقييم\s*[::]/, '').trim();
+                meta.dates = stripLabel(dates, 'تاريخ التقييم', 'تاريخ التقيم');
 
                 const hosp = readCell(740, 3);
-                meta.hospitalName = hosp.replace(/إسم المستشفي\s*[::]/, '').replace(/اسم المستشفى\s*[::]/, '').trim();
+                meta.hospitalName = stripLabel(hosp, 'إسم المستشفي', 'اسم المستشفى', 'اسم المستشفي', 'إسم المستشفى');
 
                 const insp = readCell(740, 6);
-                meta.inspectors = insp.replace(/إسم القائم بالتقييم\s*[::]/, '').replace(/اسم القائم بالتقييم\s*[::]/, '').trim();
+                meta.inspectors = stripLabel(insp, 'إسم القائم بالتقييم', 'اسم القائم بالتقييم', 'إسم القائم بالتقيم', 'اسم القائم بالتقيم');
 
                 const type = readCell(741, 3);
-                meta.type = type.replace(/نوع المستشفي\s*[::]/, '').replace(/نوع المستشفى\s*[::]/, '').trim();
+                meta.type = stripLabel(type, 'نوع المستشفي', 'نوع المستشفى');
 
 
 
