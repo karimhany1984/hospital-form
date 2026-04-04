@@ -1674,10 +1674,16 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
                     return out;
                 } catch(e) { /* fall through to pure-JS */ }
             }
-            // Pure-JS DEFLATE fallback for iOS Safari < 16.4
+            // Pure-JS DEFLATE fallback — uses a growing Uint8Array (NOT a plain [] array)
+            // to avoid the massive memory overhead of boxing every byte as a JS object.
             function rb(d, pos) { return function (n) { let v = 0; for (let i = 0; i < n; i++) { v |= ((d[pos[0] >> 3] >> (pos[0] & 7)) & 1) << i; pos[0]++; } return v; } }
             const pos = [0], read = rb(data, pos);
-            const out = [];
+            // Growing typed buffer: start at 4× compressed size, double when needed
+            let cap = Math.max(data.length * 4, 65536);
+            let out = new Uint8Array(cap);
+            let olen = 0;
+            function grow() { cap *= 2; const nb = new Uint8Array(cap); nb.set(out); out = nb; }
+            function wb(b) { if (olen >= cap) grow(); out[olen++] = b; }
             const LS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
             const LE = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
             const DS = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
@@ -1687,15 +1693,15 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
             let bf = 0;
             do {
                 bf = read(1); const bt2 = read(2);
-                if (bt2 === 0) { pos[0] = Math.ceil(pos[0] / 8) * 8; const ln = data[pos[0] / 8] | (data[pos[0] / 8 + 1] << 8); pos[0] += 32; for (let i = 0; i < ln; i++) { out.push(data[pos[0] / 8]); pos[0] += 8; } }
+                if (bt2 === 0) { pos[0] = Math.ceil(pos[0] / 8) * 8; const ln = data[pos[0] / 8] | (data[pos[0] / 8 + 1] << 8); pos[0] += 32; for (let i = 0; i < ln; i++) { wb(data[pos[0] / 8]); pos[0] += 8; } }
                 else {
                     let lt, dt;
                     if (bt2 === 1) { const ll = []; for (let i = 0; i < 144; i++)ll.push(8); for (let i = 144; i < 256; i++)ll.push(9); for (let i = 256; i < 280; i++)ll.push(7); for (let i = 280; i < 288; i++)ll.push(8); lt = bt(ll); dt = bt(new Array(32).fill(5)); }
                     else { const hl = read(5) + 257, hd = read(5) + 1, hc = read(4) + 4; const CO = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]; const cl = new Array(19).fill(0); for (let i = 0; i < hc; i++)cl[CO[i]] = read(3); const ct = bt(cl); const lg = []; while (lg.length < hl + hd) { const s = ds(ct); if (s < 16) lg.push(s); else if (s === 16) { const rp = lg[lg.length - 1]; for (let i = 0; i < read(2) + 3; i++)lg.push(rp); } else if (s === 17) { for (let i = 0; i < read(3) + 3; i++)lg.push(0); } else { for (let i = 0; i < read(7) + 11; i++)lg.push(0); } } lt = bt(lg.slice(0, hl)); dt = bt(lg.slice(hl)); }
-                    while (true) { const s = ds(lt); if (s === 256) break; if (s < 256) out.push(s); else { const li = s - 257; const ln = LS[li] + read(LE[li]); const di = ds(dt); const dist = DS[di] + read(DE[di]); for (let i = 0; i < ln; i++)out.push(out[out.length - dist]); } }
+                    while (true) { const s = ds(lt); if (s === 256) break; if (s < 256) wb(s); else { const li = s - 257; const ln = LS[li] + read(LE[li]); const di = ds(dt); const dist = DS[di] + read(DE[di]); for (let i = 0; i < ln; i++) { wb(out[olen - dist]); } } }
                 }
             } while (!bf);
-            return new Uint8Array(out);
+            return out.slice(0, olen);
         }
         async function zipRead(buf) {
             const files = {};
