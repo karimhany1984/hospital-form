@@ -1657,30 +1657,21 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
         function u32le(v) { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v, true); return b; }
 
         async function decompDeflate(data) {
-            if (typeof DecompressionStream !== 'undefined') {
+            if (typeof DecompressionStream !== 'undefined' && _iosVer >= 16) {
                 try {
-                    const result = await new Promise((resolve, reject) => {
-                        const timer = setTimeout(() => reject(new Error('timeout')), 3000);
-                        try {
-                            const ds = new DecompressionStream('deflate-raw');
-                            const writer = ds.writable.getWriter();
-                            const reader = ds.readable.getReader();
-                            const chunks = [];
-                            function pump() {
-                                reader.read().then(({ done, value }) => {
-                                    if (done) {
-                                        clearTimeout(timer);
-                                        const out = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
-                                        let p = 0; for (const c of chunks) { out.set(c, p); p += c.length; }
-                                        resolve(out);
-                                    } else { chunks.push(value); pump(); }
-                                }).catch(e => { clearTimeout(timer); reject(e); });
-                            }
-                            pump();
-                            writer.write(data).then(() => writer.close()).catch(e => { clearTimeout(timer); reject(e); });
-                        } catch(e) { clearTimeout(timer); reject(e); }
+                    const ds = new DecompressionStream('deflate-raw');
+                    const writer = ds.writable.getWriter();
+                    const reader = ds.readable.getReader();
+                    const chunks = [];
+                    const pump = () => reader.read().then(({ done, value }) => {
+                        if (done) return;
+                        chunks.push(value); return pump();
                     });
-                    return result;
+                    writer.write(data); writer.close();
+                    await pump();
+                    const out = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
+                    let p = 0; for (const c of chunks) { out.set(c, p); p += c.length; }
+                    return out;
                 } catch(e) { /* fall through to pure-JS */ }
             }
             // Pure-JS DEFLATE fallback for iOS Safari < 16.4
@@ -1725,40 +1716,34 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
             return files;
         }
 
+        // Detect if CompressionStream is reliable on this browser (iOS 12 has it but it hangs)
+        const _iosMatch = navigator.userAgent.match(/OS (\d+)_/);
+        const _iosVer = _iosMatch ? parseInt(_iosMatch[1]) : 99;
+        const _canCompress = typeof CompressionStream !== 'undefined' && _iosVer >= 16;
+
         async function zipWrite(files) {
             const lhs = [], cds = [];
             let offset = 0;
-            // iOS 12 / older Safari: CompressionStream exists but may hang,
-            // so we use a race-with-timeout and fall back to store (no compression).
-            async function tryCompress(rawData) {
-                if (typeof CompressionStream === 'undefined') return null;
-                return new Promise(resolve => {
-                    const timer = setTimeout(() => resolve(null), 2000); // 2s timeout
+            for (const [name, rawData] of Object.entries(files)) {
+                const nb = new TextEncoder().encode(name);
+                let comp = rawData, cm = 0;
+                if (_canCompress) {
                     try {
                         const cs = new CompressionStream('deflate-raw');
                         const writer = cs.writable.getWriter();
                         const reader = cs.readable.getReader();
                         const chunks = [];
-                        function pump() {
-                            reader.read().then(({ done, value }) => {
-                                if (done) {
-                                    clearTimeout(timer);
-                                    const out = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
-                                    let p = 0; for (const c of chunks) { out.set(c, p); p += c.length; }
-                                    resolve(out);
-                                } else { chunks.push(value); pump(); }
-                            }).catch(() => { clearTimeout(timer); resolve(null); });
-                        }
-                        pump();
-                        writer.write(rawData).then(() => writer.close()).catch(() => { clearTimeout(timer); resolve(null); });
-                    } catch(e) { clearTimeout(timer); resolve(null); }
-                });
-            }
-            for (const [name, rawData] of Object.entries(files)) {
-                const nb = new TextEncoder().encode(name);
-                let comp = rawData, cm = 0;
-                const compressed = await tryCompress(rawData);
-                if (compressed && compressed.length < rawData.length) { comp = compressed; cm = 8; }
+                        const pump = () => reader.read().then(({ done, value }) => {
+                            if (done) return;
+                            chunks.push(value); return pump();
+                        });
+                        writer.write(rawData); writer.close();
+                        await pump();
+                        const c = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
+                        let p = 0; for (const ch of chunks) { c.set(ch, p); p += ch.length; }
+                        if (c.length < rawData.length) { comp = c; cm = 8; }
+                    } catch(e) { comp = rawData; cm = 0; }
+                }
                 const crc = crc32(rawData);
                 const lh = new Uint8Array([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, ...nb, ...comp]);
                 const cd = new Uint8Array([0x50, 0x4B, 0x01, 0x02, 0x1E, 0x03, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, ...u32le(offset), ...nb]);
@@ -1914,6 +1899,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
 
         async function exportExcel() {
             showToast('جاري تجهيز الملف...');
+            await new Promise(r => setTimeout(r, 50)); // yield to UI thread
             try {
                 // Decode the embedded template
                 const binary = atob(TEMPLATE_B64);
@@ -1924,6 +1910,9 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
                 const files = await zipRead(templateBuf);
                 let sheet = new TextDecoder().decode(files['xl/worksheets/sheet1.xml']);
                 let ss = new TextDecoder().decode(files['xl/sharedStrings.xml']);
+
+                showToast('جاري كتابة البيانات...');
+                await new Promise(r => setTimeout(r, 30));
 
                 // ── METADATA: patch sharedStrings 737-742 ──
                 // Each entry has a bold label run; we append a normal-text value run
@@ -1989,6 +1978,8 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
                 files['xl/worksheets/sheet1.xml'] = new TextEncoder().encode(sheet);
                 files['xl/sharedStrings.xml'] = new TextEncoder().encode(ss);
 
+                showToast('جاري ضغط الملف...');
+                await new Promise(r => setTimeout(r, 30));
                 const result = await zipWrite(files);
 
                 // ── DOWNLOAD ──
