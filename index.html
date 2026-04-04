@@ -1748,46 +1748,55 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
         // ═══════════════════════════════════════
         // HYBRID TEMPLATE LOADER
         // ═══════════════════════════════════════
-                async function loadTemplateHybrid() {
-            // Force old iOS devices (and any device that fails base64) to use the external file
-            const iosVersion = getIOSVersion();
-            const isOldDevice = (iosVersion !== null && iosVersion <= 15);
+               async function loadTemplateHybrid() {
+    // On iPhone 6 and similar old devices, we MUST use the base64 method
+    // BUT we need to decode it in chunks to avoid "Out of memory"
+    
+    const iosVersion = getIOSVersion();
+    const isOldDevice = (iosVersion !== null && iosVersion <= 15);
+    
+    if (isOldDevice) {
+        showToast('⚙️ جاري التجهيز للأجهزة القديمة...');
+        await new Promise(r => setTimeout(r, 50));
+        
+        try {
+            // Decode base64 in chunks to prevent memory spike
+            const binaryString = atob(TEMPLATE_B64);
+            const bytes = new Uint8Array(binaryString.length);
             
-            // Check if the device is likely to have memory issues
-            // We'll try to detect low memory by attempting a small base64 decode first (optional but safe)
-            // For iPhone 6 specifically, we force external file.
-            
-            if (isOldDevice) {
-                console.log("Old iOS detected, using external template file.");
-                showToast('⚙️ جاري تحميل القالب...');
-                
-                // Add a cache-buster to avoid corrupted cached files
-                const url = './template.xlsx?t=' + Date.now();
-                const response = await fetch(url);
-                
-                if (!response.ok) {
-                    console.error("Failed to load external template, falling back to base64 (may fail).");
-                    showToast('⚠️ فشل التحميل، جاري المحاولة مرة أخرى');
-                    // Fallback to base64 as a last resort
-                    const binary = atob(TEMPLATE_B64);
-                    const bytes = new Uint8Array(binary.length);
-                    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-                    return bytes;
+            // Process in chunks of 10,000 characters
+            const chunkSize = 10000;
+            for (let i = 0; i < binaryString.length; i += chunkSize) {
+                const chunk = binaryString.slice(i, i + chunkSize);
+                for (let j = 0; j < chunk.length; j++) {
+                    bytes[i + j] = chunk.charCodeAt(j);
                 }
-                
-                const buffer = await response.arrayBuffer();
-                showToast('✅ تم تحميل القالب');
-                return new Uint8Array(buffer);
+                // Small pause to let the event loop breathe (prevents UI freeze)
+                if (i % 50000 === 0 && i > 0) {
+                    await new Promise(r => setTimeout(r, 5));
+                }
             }
             
-            // For modern devices (iOS 16+, Android, Desktop) use base64 (fastest)
-            showToast('⚡ وضع الأداء السريع');
-            await new Promise(r => setTimeout(r, 40));
-            const binary = atob(TEMPLATE_B64);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            showToast('✅ تم تجهيز القالب');
             return bytes;
+        } catch (e) {
+            console.error("Base64 decode failed:", e);
+            showToast('⚠️ خطأ في التحميل، جاري المحاولة مرة أخرى');
+            // If still fails, try external fetch as last resort
+            const response = await fetch('./template.xlsx');
+            if (!response.ok) throw new Error('تعذّر تحميل القالب');
+            return new Uint8Array(await response.arrayBuffer());
         }
+    }
+    
+    // Modern devices: use base64 (fast)
+    showToast('⚡ وضع الأداء السريع');
+    await new Promise(r => setTimeout(r, 40));
+    const binary = atob(TEMPLATE_B64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+}
         async function zipWrite(files) {
             const lhs = [], cds = [];
             let offset = 0;
