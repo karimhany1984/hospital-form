@@ -1329,7 +1329,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
       <input type="text" id="inspectors" name="inspectors" placeholder="اسم القائم بالمرور" value="${esc(meta.inspectors)}" oninput="meta.inspectors=this.value;debounceSave()">
 </div>
               <div class="meta-field">
-      <label for="dates">تاريخ التقييم</label>
+      <label for="dates">تواريخ التقييم</label>
       <input type="date" id="dates" name="dates" value="${esc(meta.dates)}" oninput="meta.dates=this.value;debounceSave()">
 </div>
               <div class="meta-field">
@@ -1811,7 +1811,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
                 meta.governorate = stripLabel(gov, 'المحافظة') || 'الاسكندرية';
 
                 const dates = readCell(739, 6);
-                meta.dates = stripLabel(dates, 'تاريخ التقييم', 'تاريخ التقيم');
+                meta.dates = stripLabel(dates, 'تواريخ التقييم', 'تواريخ التقيم');
 
                 const hosp = readCell(740, 3);
                 meta.hospitalName = stripLabel(hosp, 'إسم المستشفي', 'اسم المستشفى', 'اسم المستشفي', 'إسم المستشفى');
