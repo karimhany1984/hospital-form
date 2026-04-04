@@ -1755,49 +1755,73 @@ async function loadTemplateHybrid() {
     const iosVersion = getIOSVersion();
     const isOldDevice = (iosVersion !== null && iosVersion <= 15);
     
+    // On iPhone 6 and similar old devices - ALWAYS use chunked Base64
+    // NEVER try to fetch the file - it will hang
     if (isOldDevice) {
-        // Try to load from IndexedDB cache first
-        showToast('⚙️ جاري تحميل القالب...');
+        showToast('⚙️ جاري فك تشفير القالب (قد يستغرق دقيقة)...');
+        
+        // Use requestIdleCallback or setTimeout to prevent UI freeze
+        await new Promise(r => setTimeout(r, 100));
         
         try {
-            const cached = await getTemplateFromIndexedDB();
-            if (cached) {
-                showToast('✅ تم تحميل القالب من الذاكرة');
-                return cached;
-            }
-        } catch(e) {
-            console.log("IndexedDB read failed, using fetch", e);
-        }
-        
-        // Not in cache, download it once
-        showToast('📥 جاري تحميل القالب لأول مرة...');
-        
-        try {
-            const response = await fetch('./template.xlsx');
-            if (!response.ok) throw new Error('Download failed');
-            const buffer = await response.arrayBuffer();
-            const bytes = new Uint8Array(buffer);
-            
-            // Store in IndexedDB for next time
-            await storeTemplateInIndexedDB(bytes);
-            
-            showToast('✅ تم تحميل القالب بنجاح');
+            const bytes = await decodeBase64InChunksWithProgress();
+            showToast('✅ تم تجهيز القالب بنجاح');
             return bytes;
         } catch (e) {
-            console.error("Fetch failed, trying base64 fallback", e);
-            showToast('⚠️ جاري المحاولة بطريقة بديلة...');
-            return await decodeBase64InChunks();
+            console.error("Base64 decode failed:", e);
+            showToast('❌ خطأ: الرجاء تحديث الصفحة');
+            throw e;
         }
     }
     
-    // Modern devices: use base64 (fast)
-    showToast('⚡ وضع الأداء السريع');
+    // Modern devices - fast Base64 decode
+    showToast('⚡ جاري التحميل...');
     const binary = atob(TEMPLATE_B64);
     const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
     return bytes;
 }
 
+// Decode Base64 in very small chunks with progress updates
+async function decodeBase64InChunksWithProgress() {
+    const binaryString = atob(TEMPLATE_B64);
+    const totalLength = binaryString.length;
+    const bytes = new Uint8Array(totalLength);
+    
+    // Use VERY small chunks for iPhone 6 (1000 characters at a time)
+    const chunkSize = 1000;
+    let processed = 0;
+    
+    return new Promise((resolve, reject) => {
+        function processChunk() {
+            const end = Math.min(processed + chunkSize, totalLength);
+            const chunk = binaryString.slice(processed, end);
+            
+            for (let i = 0; i < chunk.length; i++) {
+                bytes[processed + i] = chunk.charCodeAt(i);
+            }
+            
+            processed = end;
+            
+            // Update progress every 5%
+            const percent = Math.round(processed / totalLength * 100);
+            if (percent % 5 === 0) {
+                showToast(`⏳ فك التشفير: ${percent}%`);
+            }
+            
+            if (processed < totalLength) {
+                // Use setTimeout to keep UI responsive
+                setTimeout(processChunk, 10);
+            } else {
+                resolve(bytes);
+            }
+        }
+        
+        processChunk();
+    });
+}
 // IndexedDB helpers
 async function getTemplateFromIndexedDB() {
     return new Promise((resolve, reject) => {
