@@ -12,13 +12,14 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.png">
 <script>
-    if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-            navigator.serviceWorker.register('sw.js').then(reg => {
-                reg.update();
-            });
-        });
-    }
+   if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        // Use './sw.js' to ensure it looks in the current folder
+        navigator.serviceWorker.register('./sw.js').then(reg => {
+            reg.update();
+        }).catch(err => console.log("SW Register Error:", err));
+    });
+}
 </script>
 <title>نموذج متابعة المستشفيات </title>
 <style>
