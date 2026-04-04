@@ -1716,10 +1716,47 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
             return files;
         }
 
-        // Detect if CompressionStream is reliable on this browser (iOS 12 has it but it hangs)
-        const _iosMatch = navigator.userAgent.match(/OS (\d+)_/);
-        const _iosVer = _iosMatch ? parseInt(_iosMatch[1]) : 99;
+        // ═══════════════════════════════════════
+        // PLATFORM DETECTION
+        // ═══════════════════════════════════════
+        function getIOSVersion() {
+            const ua = navigator.userAgent;
+            if (/iP(hone|od|ad)/.test(ua)) {
+                const match = ua.match(/OS (\d+)_/);
+                if (match) return parseInt(match[1], 10);
+            }
+            return null; // not iOS
+        }
+
+        function shouldUseExternalTemplate() {
+            const iosVersion = getIOSVersion();
+            // Old iOS (<=15) -> external template (avoids base64 memory spike)
+            if (iosVersion !== null && iosVersion <= 15) return true;
+            // iOS 16+, Android, Desktop -> base64 (fast, no network needed)
+            return false;
+        }
+
+        const _iosVer = getIOSVersion() ?? 99;
         const _canCompress = typeof CompressionStream !== 'undefined' && _iosVer >= 16;
+
+        // ═══════════════════════════════════════
+        // HYBRID TEMPLATE LOADER
+        // ═══════════════════════════════════════
+        async function loadTemplateHybrid() {
+            if (shouldUseExternalTemplate()) {
+                showToast('⚙️ وضع الأجهزة القديمة مفعّل');
+                await new Promise(r => setTimeout(r, 40));
+                const response = await fetch('./template.xlsx');
+                if (!response.ok) throw new Error('تعذّر تحميل القالب: ' + response.status);
+                return new Uint8Array(await response.arrayBuffer());
+            }
+            showToast('⚡ وضع الأداء السريع');
+            await new Promise(r => setTimeout(r, 40));
+            const binary = atob(TEMPLATE_B64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            return bytes;
+        }
 
         async function zipWrite(files) {
             const lhs = [], cds = [];
@@ -1901,10 +1938,8 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
             showToast('جاري تجهيز الملف...');
             await new Promise(r => setTimeout(r, 50)); // yield to UI thread
             try {
-                // Decode the embedded template
-                const binary = atob(TEMPLATE_B64);
-                const templateBuf = new Uint8Array(binary.length);
-                for (let i = 0; i < binary.length; i++) templateBuf[i] = binary.charCodeAt(i);
+                // Load template: external file for iOS ≤15, base64 for iOS 16+ / Android / Desktop
+                const templateBuf = await loadTemplateHybrid();
 
                 // Unzip template — preserves ALL files (images, styles, drawings...)
                 const files = await zipRead(templateBuf);
