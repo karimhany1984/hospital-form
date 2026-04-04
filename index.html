@@ -1674,16 +1674,10 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
                     return out;
                 } catch(e) { /* fall through to pure-JS */ }
             }
-            // Pure-JS DEFLATE fallback — uses a growing Uint8Array (NOT a plain [] array)
-            // to avoid the massive memory overhead of boxing every byte as a JS object.
+            // Pure-JS DEFLATE fallback for iOS Safari < 16.4
             function rb(d, pos) { return function (n) { let v = 0; for (let i = 0; i < n; i++) { v |= ((d[pos[0] >> 3] >> (pos[0] & 7)) & 1) << i; pos[0]++; } return v; } }
             const pos = [0], read = rb(data, pos);
-            // Growing typed buffer: start at 4× compressed size, double when needed
-            let cap = Math.max(data.length * 4, 65536);
-            let out = new Uint8Array(cap);
-            let olen = 0;
-            function grow() { cap *= 2; const nb = new Uint8Array(cap); nb.set(out); out = nb; }
-            function wb(b) { if (olen >= cap) grow(); out[olen++] = b; }
+            const out = [];
             const LS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
             const LE = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
             const DS = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
@@ -1693,15 +1687,15 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
             let bf = 0;
             do {
                 bf = read(1); const bt2 = read(2);
-                if (bt2 === 0) { pos[0] = Math.ceil(pos[0] / 8) * 8; const ln = data[pos[0] / 8] | (data[pos[0] / 8 + 1] << 8); pos[0] += 32; for (let i = 0; i < ln; i++) { wb(data[pos[0] / 8]); pos[0] += 8; } }
+                if (bt2 === 0) { pos[0] = Math.ceil(pos[0] / 8) * 8; const ln = data[pos[0] / 8] | (data[pos[0] / 8 + 1] << 8); pos[0] += 32; for (let i = 0; i < ln; i++) { out.push(data[pos[0] / 8]); pos[0] += 8; } }
                 else {
                     let lt, dt;
                     if (bt2 === 1) { const ll = []; for (let i = 0; i < 144; i++)ll.push(8); for (let i = 144; i < 256; i++)ll.push(9); for (let i = 256; i < 280; i++)ll.push(7); for (let i = 280; i < 288; i++)ll.push(8); lt = bt(ll); dt = bt(new Array(32).fill(5)); }
                     else { const hl = read(5) + 257, hd = read(5) + 1, hc = read(4) + 4; const CO = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]; const cl = new Array(19).fill(0); for (let i = 0; i < hc; i++)cl[CO[i]] = read(3); const ct = bt(cl); const lg = []; while (lg.length < hl + hd) { const s = ds(ct); if (s < 16) lg.push(s); else if (s === 16) { const rp = lg[lg.length - 1]; for (let i = 0; i < read(2) + 3; i++)lg.push(rp); } else if (s === 17) { for (let i = 0; i < read(3) + 3; i++)lg.push(0); } else { for (let i = 0; i < read(7) + 11; i++)lg.push(0); } } lt = bt(lg.slice(0, hl)); dt = bt(lg.slice(hl)); }
-                    while (true) { const s = ds(lt); if (s === 256) break; if (s < 256) wb(s); else { const li = s - 257; const ln = LS[li] + read(LE[li]); const di = ds(dt); const dist = DS[di] + read(DE[di]); for (let i = 0; i < ln; i++) { wb(out[olen - dist]); } } }
+                    while (true) { const s = ds(lt); if (s === 256) break; if (s < 256) out.push(s); else { const li = s - 257; const ln = LS[li] + read(LE[li]); const di = ds(dt); const dist = DS[di] + read(DE[di]); for (let i = 0; i < ln; i++)out.push(out[out.length - dist]); } }
                 }
             } while (!bf);
-            return out.slice(0, olen);
+            return new Uint8Array(out);
         }
         async function zipRead(buf) {
             const files = {};
@@ -1748,226 +1742,59 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
         // ═══════════════════════════════════════
         // HYBRID TEMPLATE LOADER
         // ═══════════════════════════════════════
-            // Store the decoded template in IndexedDB for old devices
-const TEMPLATE_CACHE_KEY = 'xlsx_template_cache';
-
-async function loadTemplateHybrid() {
-    const iosVersion = getIOSVersion();
-    const isOldDevice = (iosVersion !== null && iosVersion <= 15);
-    
-    // On iPhone 6 and similar old devices - ALWAYS use chunked Base64
-    // NEVER try to fetch the file - it will hang
-    if (isOldDevice) {
-        showToast('⚙️ جاري فك تشفير القالب (قد يستغرق دقيقة)...');
-        
-        // Use requestIdleCallback or setTimeout to prevent UI freeze
-        await new Promise(r => setTimeout(r, 100));
-        
-        try {
-            const bytes = await decodeBase64InChunksWithProgress();
-            showToast('✅ تم تجهيز القالب بنجاح');
+        async function loadTemplateHybrid() {
+            if (shouldUseExternalTemplate()) {
+                showToast('⚙️ وضع الأجهزة القديمة مفعّل');
+                await new Promise(r => setTimeout(r, 40));
+                const response = await fetch('./template.xlsx');
+                if (!response.ok) throw new Error('تعذّر تحميل القالب: ' + response.status);
+                return new Uint8Array(await response.arrayBuffer());
+            }
+            showToast('⚡ وضع الأداء السريع');
+            await new Promise(r => setTimeout(r, 40));
+            const binary = atob(TEMPLATE_B64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
             return bytes;
-        } catch (e) {
-            console.error("Base64 decode failed:", e);
-            showToast('❌ خطأ: الرجاء تحديث الصفحة');
-            throw e;
         }
-    }
-    
-    // Modern devices - fast Base64 decode
-    showToast('⚡ جاري التحميل...');
-    const binary = atob(TEMPLATE_B64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-}
 
-// Decode Base64 in very small chunks with progress updates
-async function decodeBase64InChunksWithProgress() {
-    const binaryString = atob(TEMPLATE_B64);
-    const totalLength = binaryString.length;
-    const bytes = new Uint8Array(totalLength);
-    
-    // Use VERY small chunks for iPhone 6 (1000 characters at a time)
-    const chunkSize = 1000;
-    let processed = 0;
-    
-    return new Promise((resolve, reject) => {
-        function processChunk() {
-            const end = Math.min(processed + chunkSize, totalLength);
-            const chunk = binaryString.slice(processed, end);
-            
-            for (let i = 0; i < chunk.length; i++) {
-                bytes[processed + i] = chunk.charCodeAt(i);
-            }
-            
-            processed = end;
-            
-            // Update progress every 5%
-            const percent = Math.round(processed / totalLength * 100);
-            if (percent % 5 === 0) {
-                showToast(`⏳ فك التشفير: ${percent}%`);
-            }
-            
-            if (processed < totalLength) {
-                // Use setTimeout to keep UI responsive
-                setTimeout(processChunk, 10);
-            } else {
-                resolve(bytes);
-            }
-        }
-        
-        processChunk();
-    });
-}
-// IndexedDB helpers
-async function getTemplateFromIndexedDB() {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open('TemplateCache', 1);
-        
-        request.onupgradeneeded = (e) => {
-            const db = e.target.result;
-            if (!db.objectStoreNames.contains('templates')) {
-                db.createObjectStore('templates');
-            }
-        };
-        
-        request.onsuccess = (e) => {
-            const db = e.target.result;
-            const tx = db.transaction(['templates'], 'readonly');
-            const store = tx.objectStore('templates');
-            const getRequest = store.get('xlsx_template');
-            
-            getRequest.onsuccess = () => {
-                resolve(getRequest.result || null);
-            };
-            getRequest.onerror = () => reject(getRequest.error);
-            tx.oncomplete = () => db.close();
-        };
-        
-        request.onerror = () => reject(request.error);
-    });
-}
-
-async function storeTemplateInIndexedDB(data) {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open('TemplateCache', 1);
-        
-        request.onupgradeneeded = (e) => {
-            const db = e.target.result;
-            if (!db.objectStoreNames.contains('templates')) {
-                db.createObjectStore('templates');
-            }
-        };
-        
-        request.onsuccess = (e) => {
-            const db = e.target.result;
-            const tx = db.transaction(['templates'], 'readwrite');
-            const store = tx.objectStore('templates');
-            const putRequest = store.put(data, 'xlsx_template');
-            
-            putRequest.onsuccess = () => resolve();
-            putRequest.onerror = () => reject(putRequest.error);
-            tx.oncomplete = () => db.close();
-        };
-        
-        request.onerror = () => reject(request.error);
-    });
-}
-
-async function decodeBase64InChunks() {
-    showToast('⏳ جاري فك التشفير...');
-    const binaryString = atob(TEMPLATE_B64);
-    const bytes = new Uint8Array(binaryString.length);
-    
-    const chunkSize = 5000; // Smaller chunks for old devices
-    for (let i = 0; i < binaryString.length; i += chunkSize) {
-        const chunk = binaryString.slice(i, i + chunkSize);
-        for (let j = 0; j < chunk.length; j++) {
-            bytes[i + j] = chunk.charCodeAt(j);
-        }
-        // Longer pause to prevent freeze
-        if (i % 20000 === 0 && i > 0) {
-            await new Promise(r => setTimeout(r, 50));
-            showToast(`⏳ جاري التحميل... ${Math.round(i / binaryString.length * 100)}%`);
-        }
-    }
-    
-    showToast('✅ تم التحميل');
-    return bytes;
-}
         async function zipWrite(files) {
-    const isOldDevice = (getIOSVersion() !== null && getIOSVersion() <= 15);
-    
-    const lhs = [], cds = [];
-    let offset = 0;
-    
-    for (const [name, rawData] of Object.entries(files)) {
-        const nb = new TextEncoder().encode(name);
-        let comp = rawData;
-        let cm = 0; // 0 = no compression (store mode)
-        
-        // ONLY compress on modern devices
-        if (!isOldDevice && _canCompress) {
-            try {
-                const cs = new CompressionStream('deflate-raw');
-                const writer = cs.writable.getWriter();
-                const reader = cs.readable.getReader();
-                const chunks = [];
-                const pump = () => reader.read().then(({ done, value }) => {
-                    if (done) return;
-                    chunks.push(value);
-                    return pump();
-                });
-                writer.write(rawData);
-                writer.close();
-                await pump();
-                const c = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
-                let p = 0;
-                for (const ch of chunks) {
-                    c.set(ch, p);
-                    p += ch.length;
+            const lhs = [], cds = [];
+            let offset = 0;
+            for (const [name, rawData] of Object.entries(files)) {
+                const nb = new TextEncoder().encode(name);
+                let comp = rawData, cm = 0;
+                if (_canCompress) {
+                    try {
+                        const cs = new CompressionStream('deflate-raw');
+                        const writer = cs.writable.getWriter();
+                        const reader = cs.readable.getReader();
+                        const chunks = [];
+                        const pump = () => reader.read().then(({ done, value }) => {
+                            if (done) return;
+                            chunks.push(value); return pump();
+                        });
+                        writer.write(rawData); writer.close();
+                        await pump();
+                        const c = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
+                        let p = 0; for (const ch of chunks) { c.set(ch, p); p += ch.length; }
+                        if (c.length < rawData.length) { comp = c; cm = 8; }
+                    } catch(e) { comp = rawData; cm = 0; }
                 }
-                if (c.length < rawData.length) {
-                    comp = c;
-                    cm = 8;
-                }
-            } catch(e) {
-                comp = rawData;
-                cm = 0;
+                const crc = crc32(rawData);
+                const lh = new Uint8Array([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, ...nb, ...comp]);
+                const cd = new Uint8Array([0x50, 0x4B, 0x01, 0x02, 0x1E, 0x03, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, ...u32le(offset), ...nb]);
+                lhs.push(lh); cds.push(cd); offset += lh.length;
             }
+            const cdOff = offset, cdSz = cds.reduce((a, b) => a + b.length, 0);
+            const eocd = new Uint8Array([0x50, 0x4B, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, ...u16le(cds.length), ...u16le(cds.length), ...u32le(cdSz), ...u32le(cdOff), 0x00, 0x00]);
+            const total = cdOff + cdSz + eocd.length, out = new Uint8Array(total);
+            let pos = 0;
+            for (const lh of lhs) { out.set(lh, pos); pos += lh.length; }
+            for (const cd of cds) { out.set(cd, pos); pos += cd.length; }
+            out.set(eocd, pos);
+            return out;
         }
-        
-        const crc = crc32(rawData);
-        const lh = new Uint8Array([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, ...nb, ...comp]);
-        const cd = new Uint8Array([0x50, 0x4B, 0x01, 0x02, 0x1E, 0x03, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, ...u32le(offset), ...nb]);
-        
-        lhs.push(lh);
-        cds.push(cd);
-        offset += lh.length;
-    }
-    
-    const cdOff = offset;
-    const cdSz = cds.reduce((a, b) => a + b.length, 0);
-    const eocd = new Uint8Array([0x50, 0x4B, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, ...u16le(cds.length), ...u16le(cds.length), ...u32le(cdSz), ...u32le(cdOff), 0x00, 0x00]);
-    
-    const total = cdOff + cdSz + eocd.length;
-    const out = new Uint8Array(total);
-    let pos = 0;
-    for (const lh of lhs) {
-        out.set(lh, pos);
-        pos += lh.length;
-    }
-    for (const cd of cds) {
-        out.set(cd, pos);
-        pos += cd.length;
-    }
-    out.set(eocd, pos);
-    
-    return out;
-}
 
         // Patch a single cell: preserve s= style attribute, update value
         function patchCell(sheet, cellRef, value) {
@@ -2108,51 +1935,102 @@ async function decodeBase64InChunks() {
         }
 
         async function exportExcel() {
-    const isOldDevice = (getIOSVersion() !== null && getIOSVersion() <= 15);
-    
-    if (isOldDevice) {
-        showToast('📱 جاري التصدير لجهاز قديم... قد يستغرق دقيقة');
-    } else {
-        showToast('جاري تجهيز الملف...');
-    }
-    
-    await new Promise(r => setTimeout(r, 50));
-    
-    try {
-        const templateBuf = await loadTemplateHybrid();
-        const files = await zipRead(templateBuf);
-        let sheet = new TextDecoder().decode(files['xl/worksheets/sheet1.xml']);
-        let ss = new TextDecoder().decode(files['xl/sharedStrings.xml']);
-        
-        // ... (rest of your export code remains the same)
-        
-        // For old devices, show a different message during zip
-        if (isOldDevice) {
-            showToast('📦 جاري تجميع الملف (بدون ضغط)...');
-        } else {
-            showToast('جاري ضغط الملف...');
+            showToast('جاري تجهيز الملف...');
+            await new Promise(r => setTimeout(r, 50)); // yield to UI thread
+            try {
+                // Load template: external file for iOS ≤15, base64 for iOS 16+ / Android / Desktop
+                const templateBuf = await loadTemplateHybrid();
+
+                // Unzip template — preserves ALL files (images, styles, drawings...)
+                const files = await zipRead(templateBuf);
+                let sheet = new TextDecoder().decode(files['xl/worksheets/sheet1.xml']);
+                let ss = new TextDecoder().decode(files['xl/sharedStrings.xml']);
+
+                showToast('جاري كتابة البيانات...');
+                await new Promise(r => setTimeout(r, 30));
+
+                // ── METADATA: patch sharedStrings 737-742 ──
+                // Each entry has a bold label run; we append a normal-text value run
+                ss = patchSharedString(ss, 737, meta.governorate || '');
+                ss = patchSharedString(ss, 738, meta.dates || '');
+                ss = patchSharedString(ss, 739, meta.hospitalName || '');
+                ss = patchSharedString(ss, 740, meta.inspectors || '');
+                ss = patchSharedString(ss, 741, meta.type || '');
+                ss = patchSharedString(ss, 742, meta.result || '');
+                sheet = patchCell(sheet, 'F741', meta.result || '');
+
+                // ── ITEM SCORES: cols I=9, J=10, K=11, L=12, M=13 ──
+                const toCol = c => c <= 26 ? String.fromCharCode(64 + c) : String.fromCharCode(64 + Math.floor((c - 1) / 26)) + String.fromCharCode(64 + ((c - 1) % 26 + 1));
+                FORM_DATA.forEach(sec => {
+                    let idx = 0;
+                    sec.subsections.forEach(sub => sub.items.forEach(item => {
+                        const ik = `${sec.key}__${idx}`;
+                        const xRow = ROW_MAP[ik];
+                        if (xRow) {
+                            // Clear all score columns
+                            [9, 10, 11, 12].forEach(c => { sheet = patchCell(sheet, toCol(c) + xRow, ''); });
+                            const sc = scores[ik];
+                            if (sc === 0) sheet = patchCell(sheet, toCol(9) + xRow, '✓');
+                            else if (sc === 1) sheet = patchCell(sheet, toCol(10) + xRow, '✓');
+                            else if (sc === 2) sheet = patchCell(sheet, toCol(11) + xRow, '✓');
+                            else if (sc === 'NA') sheet = patchCell(sheet, toCol(12) + xRow, '✓');
+                            sheet = patchCell(sheet, toCol(13) + xRow, notes[ik] || '');
+                        }
+                        idx++;
+                    }));
+                });
+
+                // ── SCORE SUMMARY TABLE (rows 744–775) ──
+                let tot0 = 0, tot1 = 0, tot2 = 0, totNA = 0, totEarned = 0, totMax = 0;
+                FORM_DATA.forEach(sec => {
+                    const xRow = SECTION_ROWS_MAP[sec.key];
+                    if (!xRow) return;
+                    let c0 = 0, c1 = 0, c2 = 0, cNA = 0, idx = 0;
+                    sec.subsections.forEach(sub => sub.items.forEach(() => {
+                        const sc = scores[`${sec.key}__${idx}`];
+                        if (sc === 0) c0++; else if (sc === 1) c1++; else if (sc === 2) c2++; else if (sc === 'NA') cNA++;
+                        idx++;
+                    }));
+                    const earned = c1 + c2 * 2, jVal = c2 * 2;
+                    const pct = sec.max > 0 ? ((c1 + jVal) / sec.max * 100) : 0;
+                    sheet = patchCell(sheet, 'G' + xRow, c0 || '');
+                    sheet = patchCell(sheet, 'H' + xRow, c1 || '');
+                    sheet = patchCell(sheet, 'J' + xRow, jVal || '');
+                    sheet = patchCell(sheet, 'L' + xRow, cNA || '');
+                    sheet = patchCell(sheet, 'M' + xRow, pct > 0 ? `${pct.toFixed(1)}%` : '');
+                    tot0 += c0; tot1 += c1; tot2 += jVal; totNA += cNA; totEarned += earned; totMax += sec.max;
+                });
+
+                // ── GRAND TOTAL ROW 775 ──
+                const grandPct = totMax > 0 ? (totEarned / totMax * 100) : 0;
+                sheet = patchCell(sheet, 'G775', tot0 || '');
+                sheet = patchCell(sheet, 'H775', tot1 || '');
+                sheet = patchCell(sheet, 'J775', tot2 || '');
+                sheet = patchCell(sheet, 'L775', totNA || '');
+                sheet = patchCell(sheet, 'M775', grandPct > 0 ? `${grandPct.toFixed(1)}%` : '');
+
+                // ── PUT BACK & REZIP ──
+                files['xl/worksheets/sheet1.xml'] = new TextEncoder().encode(sheet);
+                files['xl/sharedStrings.xml'] = new TextEncoder().encode(ss);
+
+                showToast('جاري ضغط الملف...');
+                await new Promise(r => setTimeout(r, 30));
+                const result = await zipWrite(files);
+
+                // ── DOWNLOAD ──
+                const fname = `الاسكندرية_${meta.hospitalName || 'مستشفى'}_${meta.dates || new Date().toISOString().slice(0, 10)}.xlsx`;
+                const blob = new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const url2 = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url2; a.download = fname;
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url2), 10000);
+                showToast('✓ تم تصدير الملف بنجاح مع كامل التنسيق');
+            } catch (e) {
+                console.error(e);
+                showToast('خطأ في التصدير: ' + e.message);
+            }
         }
-        
-        await new Promise(r => setTimeout(r, 30));
-        const result = await zipWrite(files);
-        
-        const fname = `الاسكندرية_${meta.hospitalName || 'مستشفى'}_${meta.dates || new Date().toISOString().slice(0, 10)}.xlsx`;
-        const blob = new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-        const url2 = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url2;
-        a.download = fname;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url2), 10000);
-        
-        showToast('✓ تم تصدير الملف بنجاح');
-    } catch (e) {
-        console.error(e);
-        showToast('خطأ في التصدير: ' + e.message);
-    }
-}
 
         // ═══════════════════════════════════════
         // LOCAL STORAGE
