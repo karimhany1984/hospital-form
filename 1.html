@@ -1087,10 +1087,14 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
 .ic-staff_housing::before { content: '🏠'; }
 .ic-customer_voice::before { content: '⭐'; }
 .ic-summary::before { content: '📈'; }
+
+#installBanner {
+    padding-bottom: calc(15px + env(safe-area-inset-bottom)) !important;
+}
 </style>
 </head>
 <body>
-    <div id="installBanner" style="display:none; position:fixed; bottom:0; left:0; right:0; background:#e8f2fb; padding:15px 16px; border-top:2px solid #1a6faf; text-align:center; z-index:9999; box-shadow:0 -2px 12px rgba(0,0,0,0.15);">
+    <div id="installBanner" style="display:none; position:fixed; bottom:0; left:0; right:0; background:#e8f2fb; padding:15px 16px; padding-bottom: calc(15px + env(safe-area-inset-bottom)); border-top:2px solid #1a6faf; text-align:center; z-index:9999; box-shadow:0 -2px 12px rgba(0,0,0,0.15);">
         <p style="margin:0 0 10px 0; font-weight:bold; font-size:14px;">📲 ثبّت التطبيق على جهازك للعمل بدون إنترنت</p>
         <button id="btnInstall" style="background:#1a6faf; color:white; border:none; padding:10px 24px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:bold;">تثبيت الآن</button>
         <button id="btnCancel" style="background:transparent; color:#666; border:1px solid #ccc; padding:10px 16px; border-radius:8px; cursor:pointer; font-size:13px; margin-right:10px;">ليس الآن</button>
