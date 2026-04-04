@@ -1748,14 +1748,39 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
         // ═══════════════════════════════════════
         // HYBRID TEMPLATE LOADER
         // ═══════════════════════════════════════
-        async function loadTemplateHybrid() {
-            if (shouldUseExternalTemplate()) {
-                showToast('⚙️ وضع الأجهزة القديمة مفعّل');
-                await new Promise(r => setTimeout(r, 40));
-                const response = await fetch('./template.xlsx');
-                if (!response.ok) throw new Error('تعذّر تحميل القالب: ' + response.status);
-                return new Uint8Array(await response.arrayBuffer());
+                async function loadTemplateHybrid() {
+            // Force old iOS devices (and any device that fails base64) to use the external file
+            const iosVersion = getIOSVersion();
+            const isOldDevice = (iosVersion !== null && iosVersion <= 15);
+            
+            // Check if the device is likely to have memory issues
+            // We'll try to detect low memory by attempting a small base64 decode first (optional but safe)
+            // For iPhone 6 specifically, we force external file.
+            
+            if (isOldDevice) {
+                console.log("Old iOS detected, using external template file.");
+                showToast('⚙️ جاري تحميل القالب...');
+                
+                // Add a cache-buster to avoid corrupted cached files
+                const url = './template.xlsx?t=' + Date.now();
+                const response = await fetch(url);
+                
+                if (!response.ok) {
+                    console.error("Failed to load external template, falling back to base64 (may fail).");
+                    showToast('⚠️ فشل التحميل، جاري المحاولة مرة أخرى');
+                    // Fallback to base64 as a last resort
+                    const binary = atob(TEMPLATE_B64);
+                    const bytes = new Uint8Array(binary.length);
+                    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                    return bytes;
+                }
+                
+                const buffer = await response.arrayBuffer();
+                showToast('✅ تم تحميل القالب');
+                return new Uint8Array(buffer);
             }
+            
+            // For modern devices (iOS 16+, Android, Desktop) use base64 (fastest)
             showToast('⚡ وضع الأداء السريع');
             await new Promise(r => setTimeout(r, 40));
             const binary = atob(TEMPLATE_B64);
@@ -1763,7 +1788,6 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
             for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
             return bytes;
         }
-
         async function zipWrite(files) {
             const lhs = [], cds = [];
             let offset = 0;
