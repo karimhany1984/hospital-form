@@ -2,7 +2,7 @@
   "name": "نموذج متابعة المستشفيات",
   "short_name": "متابعة المديريات",
   "description": "إدارة متابعة المديريات - مديرية الشئون الصحية بالاسكندرية",
-  "start_url": "https://karimhany1984.github.io/hospital-form/1.html",
+  "start_url": "https://karimhany1984.github.io/hospital-form/index.html",
   "scope": "https://karimhany1984.github.io/hospital-form/",
   "display": "standalone",
   "orientation": "portrait",
