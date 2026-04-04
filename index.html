@@ -1748,51 +1748,130 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
         // ═══════════════════════════════════════
         // HYBRID TEMPLATE LOADER
         // ═══════════════════════════════════════
-             async function loadTemplateHybrid() {
+            // Store the decoded template in IndexedDB for old devices
+const TEMPLATE_CACHE_KEY = 'xlsx_template_cache';
+
+async function loadTemplateHybrid() {
     const iosVersion = getIOSVersion();
     const isOldDevice = (iosVersion !== null && iosVersion <= 15);
     
-    // OLD DEVICES (iPhone 6, etc.) - ALWAYS use Base64, NEVER fetch
     if (isOldDevice) {
-        showToast('⚙️ جاري تجهيز القالب للجهاز القديم...');
-        
-        // Small delay to let UI update
-        await new Promise(r => setTimeout(r, 50));
+        // Try to load from IndexedDB cache first
+        showToast('⚙️ جاري تحميل القالب...');
         
         try {
-            // Decode base64 in chunks to prevent memory spike
-            const binaryString = atob(TEMPLATE_B64);
-            const bytes = new Uint8Array(binaryString.length);
-            
-            // Process in chunks of 10,000 characters
-            const chunkSize = 10000;
-            for (let i = 0; i < binaryString.length; i += chunkSize) {
-                const chunk = binaryString.slice(i, i + chunkSize);
-                for (let j = 0; j < chunk.length; j++) {
-                    bytes[i + j] = chunk.charCodeAt(j);
-                }
-                // Yield to UI every 50,000 chars
-                if (i % 50000 === 0 && i > 0) {
-                    await new Promise(r => setTimeout(r, 10));
-                }
+            const cached = await getTemplateFromIndexedDB();
+            if (cached) {
+                showToast('✅ تم تحميل القالب من الذاكرة');
+                return cached;
             }
+        } catch(e) {
+            console.log("IndexedDB read failed, using fetch", e);
+        }
+        
+        // Not in cache, download it once
+        showToast('📥 جاري تحميل القالب لأول مرة...');
+        
+        try {
+            const response = await fetch('./template.xlsx');
+            if (!response.ok) throw new Error('Download failed');
+            const buffer = await response.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
             
-            showToast('✅ تم تجهيز القالب');
+            // Store in IndexedDB for next time
+            await storeTemplateInIndexedDB(bytes);
+            
+            showToast('✅ تم تحميل القالب بنجاح');
             return bytes;
         } catch (e) {
-            console.error("Base64 decode failed:", e);
-            showToast('❌ خطأ في التحميل');
-            throw new Error('Failed to load template on old device');
+            console.error("Fetch failed, trying base64 fallback", e);
+            showToast('⚠️ جاري المحاولة بطريقة بديلة...');
+            return await decodeBase64InChunks();
         }
     }
     
-    // MODERN DEVICES (iOS 16+, Android, Desktop) - Use Base64 (fast)
-    showToast('⚡ جاري التحميل...');
+    // Modern devices: use base64 (fast)
+    showToast('⚡ وضع الأداء السريع');
     const binary = atob(TEMPLATE_B64);
     const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+}
+
+// IndexedDB helpers
+async function getTemplateFromIndexedDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open('TemplateCache', 1);
+        
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains('templates')) {
+                db.createObjectStore('templates');
+            }
+        };
+        
+        request.onsuccess = (e) => {
+            const db = e.target.result;
+            const tx = db.transaction(['templates'], 'readonly');
+            const store = tx.objectStore('templates');
+            const getRequest = store.get('xlsx_template');
+            
+            getRequest.onsuccess = () => {
+                resolve(getRequest.result || null);
+            };
+            getRequest.onerror = () => reject(getRequest.error);
+            tx.oncomplete = () => db.close();
+        };
+        
+        request.onerror = () => reject(request.error);
+    });
+}
+
+async function storeTemplateInIndexedDB(data) {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open('TemplateCache', 1);
+        
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains('templates')) {
+                db.createObjectStore('templates');
+            }
+        };
+        
+        request.onsuccess = (e) => {
+            const db = e.target.result;
+            const tx = db.transaction(['templates'], 'readwrite');
+            const store = tx.objectStore('templates');
+            const putRequest = store.put(data, 'xlsx_template');
+            
+            putRequest.onsuccess = () => resolve();
+            putRequest.onerror = () => reject(putRequest.error);
+            tx.oncomplete = () => db.close();
+        };
+        
+        request.onerror = () => reject(request.error);
+    });
+}
+
+async function decodeBase64InChunks() {
+    showToast('⏳ جاري فك التشفير...');
+    const binaryString = atob(TEMPLATE_B64);
+    const bytes = new Uint8Array(binaryString.length);
+    
+    const chunkSize = 5000; // Smaller chunks for old devices
+    for (let i = 0; i < binaryString.length; i += chunkSize) {
+        const chunk = binaryString.slice(i, i + chunkSize);
+        for (let j = 0; j < chunk.length; j++) {
+            bytes[i + j] = chunk.charCodeAt(j);
+        }
+        // Longer pause to prevent freeze
+        if (i % 20000 === 0 && i > 0) {
+            await new Promise(r => setTimeout(r, 50));
+            showToast(`⏳ جاري التحميل... ${Math.round(i / binaryString.length * 100)}%`);
+        }
     }
+    
+    showToast('✅ تم التحميل');
     return bytes;
 }
         async function zipWrite(files) {
