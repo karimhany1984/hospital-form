@@ -6,7 +6,8 @@ const PRE_CACHE_ASSETS = [
     Base ,
     BASE + 'index.html',
     BASE + 'manifest.json',
-    BASE + 'icon.png'
+    BASE + 'icon.png',
+    BASE + 'template.xlsx'
 ];
 
 // Install: Only cache the essentials
