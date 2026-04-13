@@ -1,24 +1,38 @@
-const CACHE_NAME = 'hospital-form-dynamic-v3';
-const BASE = 'https://karimhany1984.github.io/hospital-form/';
+const CACHE_NAME = 'trial-dynamic-v3';
+const BASE = '/hospital-form/';  // Match your GitHub Pages repo name
 
 // Files that MUST be available offline immediately
 const PRE_CACHE_ASSETS = [
-    Base ,
     BASE + 'index.html',
     BASE + 'manifest.json',
     BASE + 'icon.png'
-   
 ];
 
-// Install: Only cache the essentials
+// Install: Cache essential files with error handling
 self.addEventListener('install', e => {
     e.waitUntil(
-        caches.open(CACHE_NAME).then(cache => cache.addAll(PRE_CACHE_ASSETS))
+        caches.open(CACHE_NAME).then(async cache => {
+            try {
+                // Try to cache each asset individually
+                for (const asset of PRE_CACHE_ASSETS) {
+                    try {
+                        const response = await fetch(asset);
+                        if (response.ok) {
+                            await cache.put(asset, response);
+                        }
+                    } catch (err) {
+                        console.log('Failed to cache:', asset, err);
+                    }
+                }
+            } catch (err) {
+                console.log('Cache error:', err);
+            }
+        })
     );
     self.skipWaiting();
 });
 
-// Activate: Clean up old versions if you ever DO change the version name
+// Activate: Clean up old cache versions
 self.addEventListener('activate', e => {
     e.waitUntil(
         caches.keys().then(keys => Promise.all(
@@ -30,33 +44,38 @@ self.addEventListener('activate', e => {
     self.clients.claim();
 });
 
-// Fetch: Network First, then Cache
-// This ensures they get the LATEST version if online, 
-// but the app still works perfectly if they are offline.
+// Fetch: Cache First, then Network
 self.addEventListener('fetch', e => {
-    // Skip non-GET requests (like POSTs)
+    // Skip non-GET requests
     if (e.request.method !== 'GET') return;
+    
+    // Skip cross-origin requests for better reliability
+    if (!e.request.url.startsWith(self.location.origin)) return;
 
     e.respondWith(
-        fetch(e.request)
-            .then(networkResponse => {
-                // If we have internet, clone the response and update the cache
-                return caches.open(CACHE_NAME).then(cache => {
-                    cache.put(e.request, networkResponse.clone());
-                    return networkResponse;
-                });
-            })
-            .catch(() => {
-                // If offline, look for the file in the cache
-                return caches.match(e.request).then(cachedResponse => {
-                    if (cachedResponse) return cachedResponse;
-
-                    // If the specific page isn't found (like a broken link), 
-                    // default to the main form form
-                    if (e.request.mode === 'navigate') {
-                        return caches.match('index.html');
-                    }
-                });
-            })
+        caches.match(e.request).then(cachedResponse => {
+            if (cachedResponse) {
+                return cachedResponse;
+            }
+            return fetch(e.request).then(networkResponse => {
+                // Only cache successful responses
+                if (networkResponse && networkResponse.status === 200) {
+                    return caches.open(CACHE_NAME).then(cache => {
+                        cache.put(e.request, networkResponse.clone());
+                        return networkResponse;
+                    });
+                }
+                return networkResponse;
+            });
+        }).catch(() => {
+            // If offline and not in cache, return fallback for navigation
+            if (e.request.mode === 'navigate') {
+                return caches.match(BASE + 'index.html');
+            }
+            return new Response('Offline content not available', {
+                status: 404,
+                statusText: 'Not Found'
+            });
+        })
     );
 });
