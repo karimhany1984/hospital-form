@@ -5232,7 +5232,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
 
                     subsHtml += `
           <div class="item-row ${rowClass}" id="irow-${ik}">
-            <div class="item-num">${item.num}</div>
+           <div class="item-num">${itemGlobalIdx + 1}</div>
             <div class="item-text">${esc(item.text)}</div>
             <div class="item-controls">
               <button class="sbtn ${sc === 0 ? 's0' : ''}" onclick="setScore('${ik}', 0, '${key}')">0</button>
@@ -5246,8 +5246,8 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
             </div>
           </div>
           <div class="note-area ${hasNote ? 'open' : ''}" id="note-${ik}">
-            <textarea id="note-text-${ik}" name="note_${ik}" placeholder="ملاحظة..." oninput="setNote('${ik}', this.value)">${esc(notes[ik] || '')}</textarea>
-          </div>
+    <textarea id="note-text-${ik}" name="note_${ik}" placeholder="ملاحظة..." oninput="setNote('${ik}', this.value)">${esc(notes[ik] || '')}</textarea>
+  </div>
         `;
                     itemGlobalIdx++;
                 });
@@ -5385,13 +5385,23 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
             debounceSave();
         }
 
-        function setNote(ik, val) {
+        /*function setNote(ik, val) {
             notes[ik] = val;
             const btn = document.getElementById(`nbtn-${ik}`);
             if (btn) btn.classList.toggle('has-note', !!val);
 
             debounceSave();
-        }
+        }*/
+		// Add this temporarily to debug
+function setNote(ik, val) {
+    console.log('Saving note for', ik, ':', val);
+    notes[ik] = val;
+    console.log('Current notes object:', notes);
+    const btn = document.getElementById(`nbtn-${ik}`);
+    if (btn) btn.classList.toggle('has-note', !!val);
+    debounceSave();
+}
+		
 
         function toggleNote(ik) {
             const area = document.getElementById(`note-${ik}`);
@@ -5867,31 +5877,29 @@ files['xl/workbook.xml'] = new TextEncoder().encode(workbook);
             } catch (e) { showToast('تعذر الحفظ'); }
         }
         function loadFromLocal() {
-            try {
-                const d = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
-                if (d) {
-                    scores = d.scores || {};
-                    notes = d.notes || {};
-                    meta = { ...meta, ...(d.meta || {}) };
-
-                    // Recalculate result after sanitization
-                    updateMetaResult();
-
-                    // Optional: refresh the current view if needed (e.g., rebuild sidebar, update progress)
-                    buildSidebarNav();
-                    updateProgress();
-                    if (currentSection !== 'home' && currentSection !== 'summary') {
-                        showSection(currentSection);
-                    } else if (currentSection === 'home') {
-                        showHome();
-                    } else if (currentSection === 'summary') {
-                        renderSummary();
-                    }
-
-                    showToast('تم استعادة البيانات المحفوظة');
-                }
-            } catch (e) { }
+    try {
+        const d = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+        if (d) {
+            scores = d.scores || {};
+            notes = d.notes || {};  // Make sure this line exists
+            meta = { ...meta, ...(d.meta || {}) };
+            
+            updateMetaResult();
+            buildSidebarNav();
+            updateProgress();
+            
+            if (currentSection !== 'home' && currentSection !== 'summary') {
+                showSection(currentSection);
+            } else if (currentSection === 'home') {
+                showHome();
+            } else if (currentSection === 'summary') {
+                renderSummary();
+            }
+            
+            showToast('تم استعادة البيانات المحفوظة');
         }
+    } catch (e) { }
+}
         function confirmClear() {
             openModal('مسح جميع البيانات', 'هل أنت متأكد؟ سيتم حذف جميع التقييمات والملاحظات.', () => {
                 scores = {}; notes = {}; meta = { hospital: '', hospitalName: '', type: '', governorate: 'الاسكندرية', inspectors: '', dates: '', result: '' };
