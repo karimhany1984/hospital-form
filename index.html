@@ -5664,7 +5664,7 @@ function setNote(ik, val) {
             // Self-closing: <c r="I13" s="4"/>
             sheet = sheet.replace(new RegExp('<c r="' + cellRef + '"([^/]*)/>'), repl);
             // With content: <c r="I13" s="4" t="s"><v>...</v></c>
-            sheet = sheet.replace(new RegExp('<c r="' + cellRef + '"((?:(?!<\/row>)[\s\S])*?<\/c>), repl);
+            sheet = sheet.replace(new RegExp('<c r="' + cellRef + '"([^>]*)>[\s\S]*?<\/c>'), repl);
             return sheet;
         }
 
@@ -5749,7 +5749,7 @@ function setNote(ik, val) {
                         if (exRow) {
                             // Read col C for score
                             const cAddr = 'C' + exRow;
-                            const cRe = new RegExp('<c\\s[^>]*r="' + cAddr + '"[^>]*>[\\s\\S]*?<\/c>');
+                            const cRe = new RegExp('<c\\s[^>]*r="' + cAddr + '"(?=[">/ ])[^>]*>(?:(?!<\/row>)[\\s\\S])*?<\/c>');
                             const cMatch = sheet.match(cRe);
                             if (cMatch) {
                                 const vMatch = cMatch[0].match(/<v>([^<]*)<\/v>/);
@@ -5761,13 +5761,21 @@ function setNote(ik, val) {
                                     else if (val === '2' || val === '2.0') scores[mapKey] = 2;
                                 }
                             }
-                            // Read col D for notes
+                            // Read col D for notes (resolve shared strings if t="s")
                             const dAddr = 'D' + exRow;
-                            const dRe = new RegExp('<c\\s[^>]*r="' + dAddr + '"[^>]*>[\\s\\S]*?<\/c>');
+                            const dRe = new RegExp('<c\\s[^>]*r="' + dAddr + '"(?=[">/ ])[^>]*>(?:(?!<\/row>)[\\s\\S])*?<\/c>');
                             const dMatch = sheet.match(dRe);
                             if (dMatch) {
                                 const vMatch = dMatch[0].match(/<v>([^<]*)<\/v>/);
-                                if (vMatch && vMatch[1].trim()) notes[mapKey] = vMatch[1].trim();
+                                if (vMatch && vMatch[1].trim()) {
+                                    if (/\bt="s"/.test(dMatch[0])) {
+                                        // Shared string: look up in ssItems array
+                                        const ssIdx = parseInt(vMatch[1].trim());
+                                        if (!isNaN(ssIdx) && ssItems[ssIdx]) notes[mapKey] = ssItems[ssIdx];
+                                    } else {
+                                        notes[mapKey] = vMatch[1].trim();
+                                    }
+                                }
                             }
                         }
                         idx++;
