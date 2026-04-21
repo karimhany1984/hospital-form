@@ -5225,7 +5225,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
                     if (sc === 0) rowClass = 'scored-0';
                     else if (sc === 1) rowClass = 'scored-1';
                     else if (sc === 2) rowClass = 'scored-2';
-                    else if (sc === 'NA') rowClass = 'scored-na';
+                    else if (sc === 'N/A') rowClass = 'scored-na';
 
                     // Determine if this item is binary-only
                     const isBinary = item.binaryOnly === true;
@@ -5241,7 +5241,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
                             : `<button class="sbtn ${sc === 1 ? 's1' : ''}" onclick="setScore('${ik}', 1, '${key}')">1</button>`
                         }
               <button class="sbtn ${sc === 2 ? 's2' : ''}" onclick="setScore('${ik}', 2, '${key}')">2</button>
-              <button class="sbtn ${sc === 'NA' ? 'sna' : ''}" onclick="setScore('${ik}', 'NA', '${key}')">NA</button>
+              <button class="sbtn ${sc === 'N/A' ? 'sna' : ''}" onclick="setScore('${ik}', 'N/A', '${key}')">N/A</button>
               <button class="nbtn ${hasNote ? 'has-note' : ''}" id="nbtn-${ik}" onclick="toggleNote('${ik}')">📝</button>
             </div>
           </div>
@@ -5276,7 +5276,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
             <div class="legend-item"><div class="legend-dot dot-2"></div> 2 متوفر بالكامل</div>
             <div class="legend-item"><div class="legend-dot dot-1"></div> 1 متوفر جزئياً</div>
             <div class="legend-item"><div class="legend-dot dot-0"></div> 0 غير متوفر</div>
-            <div class="legend-item"><div class="legend-dot dot-na"></div> NA غير قابل</div>
+            <div class="legend-item"><div class="legend-dot dot-na"></div> N/A غير قابل</div>
           </div>
           ${subsHtml}
           <div class="sec-nav">
@@ -5358,16 +5358,13 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
                     if (item) break;
                 }
             }
-            if (item && item.binaryOnly === true && val === 1) {
-                showToast('⚠️ غير مسموح بتقييم جزئي لهذا البند (يُسمح فقط 0 أو 2 أو NA)');
-                return;
-            }
+            
 
             // Normal scoring
             scores[ik] = val;
             const row = document.getElementById(`irow-${ik}`);
             if (row) {
-                row.className = `item-row${val === 0 ? ' scored-0' : val === 1 ? ' scored-1' : val === 2 ? ' scored-2' : val === 'NA' ? ' scored-na' : ''}`;
+                row.className = `item-row${val === 0 ? ' scored-0' : val === 1 ? ' scored-1' : val === 2 ? ' scored-2' : val === 'N/A' ? ' scored-na' : ''}`;
                 const btns = row.querySelectorAll('.sbtn');
                 btns.forEach((b) => {
                     b.classList.remove('s0', 's1', 's2', 'sna');
@@ -5375,7 +5372,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
                     if (btnText === '0' && val === 0) b.classList.add('s0');
                     else if (btnText === '1' && val === 1) b.classList.add('s1');
                     else if (btnText === '2' && val === 2) b.classList.add('s2');
-                    else if (btnText === 'NA' && val === 'NA') b.classList.add('sna');
+                    else if (btnText === 'N/A' && val === 'N/A') b.classList.add('sna');
                 });
             }
             updateSectionScoreDisplay(secKey);
@@ -5755,7 +5752,7 @@ function setNote(ik, val) {
                                 const vMatch = cMatch[0].match(/<v>([^<]*)<\/v>/);
                                 if (vMatch) {
                                     const val = vMatch[1].trim();
-                                    if (val === 'NA') scores[mapKey] = 'NA';
+                                    if (val === 'N/A') scores[mapKey] = 'N/A';
                                     else if (val === '0' || val === '0.0') scores[mapKey] = 0;
                                     else if (val === '1' || val === '1.0') scores[mapKey] = 1;
                                     else if (val === '2' || val === '2.0') scores[mapKey] = 2;
@@ -5830,7 +5827,7 @@ files['xl/workbook.xml'] = new TextEncoder().encode(workbook);
                 sheet2 = patchCell(sheet2, 'F2', meta.inspectors || '');
                 sheet2 = patchCell(sheet2, 'D3', meta.type || '');
 
-                // ── ITEM SCORES: col C = score (0/1/2/NA), col D = notes ──
+                // ── ITEM SCORES: col C = score (0/1/2/N/A), col D = notes ──
                 FORM_DATA.forEach(sec => {
                     let idx = 0;
                     sec.subsections.forEach(sub => sub.items.forEach(item => {
@@ -5838,8 +5835,8 @@ files['xl/workbook.xml'] = new TextEncoder().encode(workbook);
                         const xRow = ROW_MAP[ik];
                         if (xRow) {
                             const sc = scores[ik];
-                            // Write numeric score (0,1,2) or 'NA' to col C
-                            if (sc === 'NA') sheet = patchCell(sheet, 'C' + xRow, 'NA');
+                            // Write numeric score (0,1,2) or 'N/A' to col C
+                            if (sc === 'N/A') sheet = patchCell(sheet, 'C' + xRow, 'N/A');
                             else if (sc !== undefined && sc !== null) sheet = patchCell(sheet, 'C' + xRow, sc);
                             else sheet = patchCell(sheet, 'C' + xRow, '');
                             // Notes to col D
