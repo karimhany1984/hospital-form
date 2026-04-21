@@ -5751,7 +5751,14 @@ function setNote(ik, val) {
                             if (cMatch) {
                                 const vMatch = cMatch[0].match(/<v>([^<]*)<\/v>/);
                                 if (vMatch) {
-                                    const val = vMatch[1].trim();
+                                    let val = vMatch[1].trim();
+                                    // Resolve shared string (t="s") — e.g. N/A stored as shared string index
+                                    if (/\bt="s"/.test(cMatch[0])) {
+                                        const ssIdx = parseInt(val);
+                                        if (!isNaN(ssIdx) && ssItems[ssIdx] !== undefined) {
+                                            val = ssItems[ssIdx];
+                                        }
+                                    }
                                     if (val === 'N/A') scores[mapKey] = 'N/A';
                                     else if (val === '0' || val === '0.0') scores[mapKey] = 0;
                                     else if (val === '1' || val === '1.0') scores[mapKey] = 1;
