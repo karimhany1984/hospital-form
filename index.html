@@ -1114,6 +1114,9 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
             <button class="hbtn hbtn-ghost hbtn-desktop" onclick="openUploadDialog()">
                 <span class="icon-sm">📂</span> فتح ملف
             </button>
+            <button class="hbtn hbtn-ghost hbtn-desktop" onclick="openMergeDialog()" title="دمج تقرير مفتش آخر">
+                <span class="icon-sm">🔗</span> دمج تقرير
+            </button>
           
             <button class="hbtn hbtn-accent" onclick="exportExcel()">
                 <span class="icon-sm">📥</span> <span class="hbtn-desktop">Excel</span><span class="hbtn-mobile">تصدير</span>
@@ -1183,6 +1186,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
 
     <!-- HIDDEN FILE INPUT -->
     <input type="file" id="fileInput" accept=".xlsx,.xls" onchange="handleFileUpload(event)">
+    <input type="file" id="mergeInput" accept=".xlsx,.xls" onchange="handleMergeUpload(event)">
 
     <script>
         // ═══════════════════════════════════════
@@ -5174,6 +5178,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
 
           <div class="quick-actions">
             <button class="qa-btn" onclick="openUploadDialog()">📂 فتح ملف محفوظ سابق</button>
+            <button class="qa-btn" onclick="openMergeDialog()" style="border-color:#0a7764;color:#0a7764;">🔗 دمج تقرير مفتش آخر</button>
             
             <button class="qa-btn" onclick="showSection('summary')">📈 ملخص النتائج</button>
             <button class="qa-btn green" onclick="exportExcel()">📥 تصدير Excel</button>
@@ -5890,6 +5895,172 @@ function setNote(ik, val) {
             }
             event.target.value = '';
         }
+
+        // ═══════════════════════════════════════
+        // MERGE REPORT FEATURE
+        // ═══════════════════════════════════════
+        function openMergeDialog() {
+            document.getElementById('mergeInput').click();
+        }
+
+        async function handleMergeUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            showToast('جاري قراءة التقرير المراد دمجه...');
+            try {
+                const buf = new Uint8Array(await file.arrayBuffer());
+                const files = await zipRead(buf);
+                const sheet = new TextDecoder().decode(files['xl/worksheets/sheet1.xml']);
+                const ss_xml = new TextDecoder().decode(files['xl/sharedStrings.xml']);
+
+                // Parse shared strings
+                const ssItems = [];
+                ss_xml.replace(/<si>([\s\S]*?)<\/si>/g, (m, inner) => {
+                    let txt = '';
+                    inner.replace(/<t[^>]*>([^<]*)<\/t>/g, (_, t) => { txt += t; });
+                    ssItems.push(txt.trim());
+                });
+
+                // Read all scores+notes from the incoming file
+                const incomingScores = {};
+                const incomingNotes  = {};
+
+                FORM_DATA.forEach(sec => {
+                    let idx = 0;
+                    sec.subsections.forEach(sub => sub.items.forEach(() => {
+                        const mapKey = sec.key + '__' + idx;
+                        const exRow  = ROW_MAP[mapKey];
+                        if (exRow) {
+                            // Score (col C)
+                            const cRe = new RegExp('<c\\s[^>]*r="C' + exRow + '"(?=[">/ ])[^>]*>(?:(?!<\\/row>)[\\s\\S])*?<\\/c>');
+                            const cM  = sheet.match(cRe);
+                            if (cM) {
+                                const vM = cM[0].match(/<v>([^<]*)<\/v>/);
+                                if (vM) {
+                                    let val = vM[1].trim();
+                                    if (/\bt="s"/.test(cM[0])) {
+                                        const si = parseInt(val);
+                                        if (!isNaN(si) && ssItems[si] !== undefined) val = ssItems[si];
+                                    }
+                                    if (val === 'N/A') incomingScores[mapKey] = 'N/A';
+                                    else if (val === '0' || val === '0.0') incomingScores[mapKey] = 0;
+                                    else if (val === '1' || val === '1.0') incomingScores[mapKey] = 1;
+                                    else if (val === '2' || val === '2.0') incomingScores[mapKey] = 2;
+                                }
+                            }
+                            // Note (col D)
+                            const dRe = new RegExp('<c\\s[^>]*r="D' + exRow + '"(?=[">/ ])[^>]*>(?:(?!<\\/row>)[\\s\\S])*?<\\/c>');
+                            const dM  = sheet.match(dRe);
+                            if (dM) {
+                                const vM = dM[0].match(/<v>([^<]*)<\/v>/);
+                                if (vM && vM[1].trim()) {
+                                    if (/\bt="s"/.test(dM[0])) {
+                                        const si = parseInt(vM[1].trim());
+                                        if (!isNaN(si) && ssItems[si]) incomingNotes[mapKey] = ssItems[si];
+                                    } else {
+                                        incomingNotes[mapKey] = vM[1].trim();
+                                    }
+                                }
+                            }
+                        }
+                        idx++;
+                    }));
+                });
+
+                // Find conflicts: questions that have a score in BOTH current and incoming
+                const conflicts = Object.keys(incomingScores).filter(
+                    k => scores[k] !== undefined && incomingScores[k] !== undefined
+                );
+
+                // Also find new entries (incoming has value, current doesn't)
+                const newEntries = Object.keys(incomingScores).filter(
+                    k => scores[k] === undefined && incomingScores[k] !== undefined
+                );
+
+                if (Object.keys(incomingScores).length === 0 && Object.keys(incomingNotes).length === 0) {
+                    showToast('الملف المحمل لا يحتوي على بيانات للدمج');
+                    event.target.value = '';
+                    return;
+                }
+
+                // Execute the actual merge
+                function applyMerge(overwriteConflicts) {
+                    let merged = 0, skipped = 0;
+
+                    // Apply scores
+                    Object.keys(incomingScores).forEach(k => {
+                        if (scores[k] !== undefined && !overwriteConflicts) {
+                            skipped++;
+                        } else {
+                            scores[k] = incomingScores[k];
+                            merged++;
+                        }
+                    });
+
+                    // Apply notes: merge by appending if both exist, else just take incoming
+                    Object.keys(incomingNotes).forEach(k => {
+                        if (notes[k] && incomingNotes[k] && notes[k] !== incomingNotes[k]) {
+                            // Append incoming note to existing with separator
+                            notes[k] = notes[k] + ' | ' + incomingNotes[k];
+                        } else if (incomingNotes[k]) {
+                            notes[k] = incomingNotes[k];
+                        }
+                    });
+
+                    updateMetaResult();
+                    saveToLocal();
+                    buildSidebarNav();
+                    updateProgress();
+                    showHome();
+
+                    const msg = overwriteConflicts
+                        ? `✓ تم الدمج: ${merged} سؤال مُدمَج، ${skipped} محدَّث`
+                        : `✓ تم الدمج: ${merged} سؤال جديد أُضيف، ${skipped} سؤال تجاوزناه (موجود مسبقاً)`;
+                    showToast(msg);
+                }
+
+                if (conflicts.length > 0) {
+                    // Show conflict resolution dialog
+                    showMergeConflictModal(conflicts.length, newEntries.length, applyMerge);
+                } else {
+                    // No conflicts — merge directly
+                    applyMerge(false);
+                }
+
+            } catch (e) {
+                console.error(e);
+                showToast('خطأ في قراءة الملف: ' + e.message);
+            }
+            event.target.value = '';
+        }
+
+        function showMergeConflictModal(conflictCount, newCount, applyMerge) {
+            const bg = document.getElementById('modalBg');
+            document.getElementById('modalTitle').textContent = '⚠️ تعارض في البيانات';
+            document.getElementById('modalBody').innerHTML =
+                `التقرير المراد دمجه يحتوي على:<br>` +
+                `• <strong>${newCount}</strong> سؤال جديد (لم يُجَب عنه في التقرير الحالي)<br>` +
+                `• <strong>${conflictCount}</strong> سؤال مُجاب مسبقاً في كلا التقريرين<br><br>` +
+                `كيف تريد معالجة الأسئلة المتعارضة؟`;
+
+            // Rebuild buttons: Keep Current | Overwrite | Cancel
+            const btnsDiv = document.getElementById('modalBg').querySelector('.modal-btns');
+            btnsDiv.innerHTML = `
+                <button class="btn btn-primary" id="mergeKeepBtn">إبقاء الحالي</button>
+                <button class="btn btn-danger" id="mergeOverwriteBtn">استبدال بالجديد</button>
+                <button class="btn btn-ghost" onclick="closeModal()">إلغاء</button>
+            `;
+            document.getElementById('mergeKeepBtn').onclick = () => {
+                closeModal();
+                applyMerge(false);   // keep existing values for conflicts
+            };
+            document.getElementById('mergeOverwriteBtn').onclick = () => {
+                closeModal();
+                applyMerge(true);    // overwrite with incoming values
+            };
+            bg.classList.add('open');
+        }
+
 function forceRecalculation(workbookXml) {
     // Add fullCalcOnLoad attribute to force recalculation when opening
     if (workbookXml.includes('<calcPr')) {
