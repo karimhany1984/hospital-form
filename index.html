@@ -1141,7 +1141,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
                 <h3>أقسام النموذج</h3>
                 <div class="sidebar-total">
                     <span class="score-big" id="sbTotalScore">0</span>
-                    <span class="score-max">/ 1520 نقطة</span>
+                    <span class="score-max">/ 1522 نقطة</span>
                     <span class="pct-badge" id="sbTotalPct">0%</span>
                 </div>
             </div>
@@ -5567,7 +5567,7 @@ function setNote(ik, val) {
             const sb = document.getElementById('sbTotalScore');
             const sbp = document.getElementById('sbTotalPct');
             if (sb) sb.textContent = grand;
-            if (sbp) sbp.textContent = `${Math.round(grand / 1520 * 100)}%`;
+            if (sbp) sbp.textContent = `${Math.round(grand / 1522 * 100)}%`;
         }
         function updateMetaResult() {
             let grandEarned = 0, grandMax = 0;
