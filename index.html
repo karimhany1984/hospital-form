@@ -1620,23 +1620,24 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
 "oncology__20": 501,
 "oncology__21": 502,
 "oncology__22": 503,
-"oncology__23": 505,
-"oncology__24": 506,
-"oncology__25": 507,
-"oncology__26": 508,
-"oncology__27": 509,
-"oncology__28": 510,
-"oncology__29": 511,
-"oncology__30": 512,
-"oncology__31": 513,
-"oncology__32": 514,
-"oncology__33": 515,
-"oncology__34": 516,
-"oncology__35": 517,
-"oncology__36": 518,
-"oncology__37": 519,
-"oncology__38": 520,
-"oncology__39": 521,
+"oncology__23": 504,
+"oncology__24": 505,
+"oncology__25": 506,
+"oncology__26": 507,
+"oncology__27": 508,
+"oncology__28": 509,
+"oncology__29": 510,
+"oncology__30": 511,
+"oncology__31": 512,
+"oncology__32": 513,
+"oncology__33": 514,
+"oncology__34": 515,
+"oncology__35": 516,
+"oncology__36": 517,
+"oncology__37": 518,
+"oncology__38": 519,
+"oncology__39": 520,
+"oncology__40": 521,
 "telehealth__0": 525,
 "telehealth__1": 526,
 "telehealth__2": 527,
@@ -3534,7 +3535,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
     "key": "oncology",
     "title": "قسم الأورام",
     "icon": "🎗️",
-    "max": 80,
+    "max": 82,
     "subsections": [
       {
         "title": "قسم الأورام",
@@ -5304,98 +5305,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
           </div>
         </div>`;
 }
-		/*function showSection(key) {
-            if (key === 'home') { showHome(); return; }
-            if (key === 'summary') { currentSection = 'summary'; buildSidebarNav(); renderSummary(); return; }
-
-            currentSection = key;
-            buildSidebarNav();
-            document.getElementById('mnHome')?.classList.remove('active');
-            document.getElementById('mnSummary')?.classList.remove('active');
-
-            const sec = FORM_DATA.find(s => s.key === key);
-            if (!sec) return;
-
-            const { earned } = getSectionScore(key);
-            const pct = sec.max > 0 ? Math.round(earned / sec.max * 100) : 0;
-            const pctClass = pct >= 80 ? 'pct-high' : pct >= 50 ? 'pct-mid' : pct > 0 ? 'pct-low' : 'pct-zero';
-            const pctColor = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--orange)' : pct > 0 ? 'var(--red)' : 'var(--text-dim)';
-
-            // Inside showSection(), after building subsections
-            let subsHtml = '';
-            let itemGlobalIdx = 0;
-            sec.subsections.forEach(sub => {
-                subsHtml += `<div class="subsec-title">${sub.title}</div><div class="subsec-body">`;
-                sub.items.forEach(item => {
-                    const ik = `${key}__${itemGlobalIdx}`;
-                    const sc = scores[ik];
-                    const hasNote = !!notes[ik];
-                    let rowClass = '';
-                    if (sc === 0) rowClass = 'scored-0';
-                    else if (sc === 1) rowClass = 'scored-1';
-                    else if (sc === 2) rowClass = 'scored-2';
-                    else if (sc === 'N/A') rowClass = 'scored-na';
-
-                    // Determine if this item is binary-only
-                    const isBinary = item.binaryOnly === true;
-
-                    subsHtml += `
-          <div class="item-row ${rowClass}" id="irow-${ik}">
-           <div class="item-num">${itemGlobalIdx + 1}</div>
-            <div class="item-text">${esc(item.text)}</div>
-            <div class="item-controls">
-              <button class="sbtn ${sc === 0 ? 's0' : ''}" onclick="setScore('${ik}', 0, '${key}')">0</button>
-              ${isBinary
-                            ? `<button class="sbtn-disabled" disabled>1</button>`
-                            : `<button class="sbtn ${sc === 1 ? 's1' : ''}" onclick="setScore('${ik}', 1, '${key}')">1</button>`
-                        }
-              <button class="sbtn ${sc === 2 ? 's2' : ''}" onclick="setScore('${ik}', 2, '${key}')">2</button>
-              <button class="sbtn ${sc === 'N/A' ? 'sna' : ''}" onclick="setScore('${ik}', 'N/A', '${key}')">N/A</button>
-              <button class="nbtn ${hasNote ? 'has-note' : ''}" id="nbtn-${ik}" onclick="toggleNote('${ik}')">📝</button>
-            </div>
-          </div>
-          <div class="note-area ${hasNote ? 'open' : ''}" id="note-${ik}">
-    <textarea id="note-text-${ik}" name="note_${ik}" placeholder="ملاحظة..." oninput="setNote('${ik}', this.value)">${esc(notes[ik] || '')}</textarea>
-  </div>
-        `;
-                    itemGlobalIdx++;
-                });
-                subsHtml += `</div>`;
-            });
-
-            const idx = FORM_DATA.findIndex(s => s.key === key);
-            const prevKey = idx > 0 ? FORM_DATA[idx - 1].key : null;
-            const nextKey = idx < FORM_DATA.length - 1 ? FORM_DATA[idx + 1].key : null;
-
-            document.getElementById('mainContent').innerHTML = `
-        <div class="section-view">
-          <div class="section-title-bar">
-            <div class="stb-icon ic-${key}"></div>
-            <div class="stb-text">
-              <h2>${sec.title}</h2>
-              <p>الحد الأقصى: ${sec.max} نقطة · ${sec.subsections.reduce((a, s) => a + s.items.length, 0)} عنصر</p>
-            </div>
-            <div class="stb-score">
-              <div class="big" id="sec-score-${key}">${earned}</div>
-              <div class="small">من ${sec.max}</div>
-              <span class="pct" style="background:${pctColor}20;color:${pctColor}" id="sec-pct-${key}">${pct}%</span>
-            </div>
-          </div>
-          <div class="legend">
-            <div class="legend-item"><div class="legend-dot dot-2"></div> 2 متوفر بالكامل</div>
-            <div class="legend-item"><div class="legend-dot dot-1"></div> 1 متوفر جزئياً</div>
-            <div class="legend-item"><div class="legend-dot dot-0"></div> 0 غير متوفر</div>
-            <div class="legend-item"><div class="legend-dot dot-na"></div> N/A غير قابل</div>
-          </div>
-          ${subsHtml}
-          <div class="sec-nav">
-            ${prevKey ? `<button class="sec-nav-btn" onclick="showSection('${prevKey}')">← ${FORM_DATA.find(s => s.key === prevKey).title}</button>` : '<div></div>'}
-            ${nextKey ? `<button class="sec-nav-btn primary" onclick="showSection('${nextKey}')">${FORM_DATA.find(s => s.key === nextKey).title} →</button>`
-                    : `<button class="sec-nav-btn primary" onclick="showSection('summary')">📈 عرض الملخص</button>`}
-          </div>
-        </div>`;
-        }*/
-
+		
         // ═══════════════════════════════════════
         // SUMMARY
         // ═══════════════════════════════════════
