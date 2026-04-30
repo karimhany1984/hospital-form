@@ -1181,6 +1181,19 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
         </div>
     </div>
 
+    <!-- MERGE CONFLICT MODAL -->
+    <div class="modal-bg" id="mergeModalBg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center;">
+        <div class="modal">
+            <h3 id="mergeModalTitle"></h3>
+            <p id="mergeModalBody"></p>
+            <div class="modal-btns">
+                <button class="btn btn-primary"  id="mergeKeepBtn">إبقاء الحالي</button>
+                <button class="btn btn-danger"   id="mergeOverwriteBtn">استبدال بالجديد</button>
+                <button class="btn btn-ghost"    onclick="closeMergeModal()">إلغاء</button>
+            </div>
+        </div>
+    </div>
+
     <!-- TOAST -->
     <div class="toast" id="toast"></div>
 
@@ -5921,7 +5934,7 @@ function setNote(ik, val) {
                     ssItems.push(txt.trim());
                 });
 
-                // Read all scores+notes from the incoming file
+                // Read all scores + notes from the incoming file
                 const incomingScores = {};
                 const incomingNotes  = {};
 
@@ -5932,7 +5945,7 @@ function setNote(ik, val) {
                         const exRow  = ROW_MAP[mapKey];
                         if (exRow) {
                             // Score (col C)
-                            const cRe = new RegExp('<c\\s[^>]*r="C' + exRow + '"(?=[">/ ])[^>]*>(?:(?!<\\/row>)[\\s\\S])*?<\\/c>');
+                            const cRe = new RegExp('<c\\s[^>]*r="C' + exRow + '"(?=[">/ ])[^>]*>(?:(?!<\/row>)[\\s\\S])*?<\/c>');
                             const cM  = sheet.match(cRe);
                             if (cM) {
                                 const vM = cM[0].match(/<v>([^<]*)<\/v>/);
@@ -5949,7 +5962,7 @@ function setNote(ik, val) {
                                 }
                             }
                             // Note (col D)
-                            const dRe = new RegExp('<c\\s[^>]*r="D' + exRow + '"(?=[">/ ])[^>]*>(?:(?!<\\/row>)[\\s\\S])*?<\\/c>');
+                            const dRe = new RegExp('<c\\s[^>]*r="D' + exRow + '"(?=[">/ ])[^>]*>(?:(?!<\/row>)[\\s\\S])*?<\/c>');
                             const dM  = sheet.match(dRe);
                             if (dM) {
                                 const vM = dM[0].match(/<v>([^<]*)<\/v>/);
@@ -5967,27 +5980,25 @@ function setNote(ik, val) {
                     }));
                 });
 
-                // Find conflicts: questions that have a score in BOTH current and incoming
-                const conflicts = Object.keys(incomingScores).filter(
-                    k => scores[k] !== undefined && incomingScores[k] !== undefined
-                );
-
-                // Also find new entries (incoming has value, current doesn't)
-                const newEntries = Object.keys(incomingScores).filter(
-                    k => scores[k] === undefined && incomingScores[k] !== undefined
-                );
-
-                if (Object.keys(incomingScores).length === 0 && Object.keys(incomingNotes).length === 0) {
+                const totalIncoming = Object.keys(incomingScores).length + Object.keys(incomingNotes).length;
+                if (totalIncoming === 0) {
                     showToast('الملف المحمل لا يحتوي على بيانات للدمج');
                     event.target.value = '';
                     return;
                 }
 
-                // Execute the actual merge
+                // Conflicts: question answered in BOTH reports
+                const conflicts = Object.keys(incomingScores).filter(
+                    k => scores[k] !== undefined && incomingScores[k] !== undefined
+                );
+                const newEntries = Object.keys(incomingScores).filter(
+                    k => scores[k] === undefined
+                );
+
+                // Apply merge: overwriteConflicts=true → replace, false → keep current
                 function applyMerge(overwriteConflicts) {
                     let merged = 0, skipped = 0;
 
-                    // Apply scores
                     Object.keys(incomingScores).forEach(k => {
                         if (scores[k] !== undefined && !overwriteConflicts) {
                             skipped++;
@@ -5997,10 +6008,9 @@ function setNote(ik, val) {
                         }
                     });
 
-                    // Apply notes: merge by appending if both exist, else just take incoming
+                    // Notes: append if both exist, otherwise just set
                     Object.keys(incomingNotes).forEach(k => {
                         if (notes[k] && incomingNotes[k] && notes[k] !== incomingNotes[k]) {
-                            // Append incoming note to existing with separator
                             notes[k] = notes[k] + ' | ' + incomingNotes[k];
                         } else if (incomingNotes[k]) {
                             notes[k] = incomingNotes[k];
@@ -6014,16 +6024,14 @@ function setNote(ik, val) {
                     showHome();
 
                     const msg = overwriteConflicts
-                        ? `✓ تم الدمج: ${merged} سؤال مُدمَج، ${skipped} محدَّث`
-                        : `✓ تم الدمج: ${merged} سؤال جديد أُضيف، ${skipped} سؤال تجاوزناه (موجود مسبقاً)`;
+                        ? ('✓ تم الدمج: ' + merged + ' سؤال مُحدَّث، ' + skipped + ' تجاوزناه')
+                        : ('✓ تم الدمج: ' + merged + ' سؤال جديد أُضيف، ' + skipped + ' تجاوزناه');
                     showToast(msg);
                 }
 
                 if (conflicts.length > 0) {
-                    // Show conflict resolution dialog
                     showMergeConflictModal(conflicts.length, newEntries.length, applyMerge);
                 } else {
-                    // No conflicts — merge directly
                     applyMerge(false);
                 }
 
@@ -6035,30 +6043,27 @@ function setNote(ik, val) {
         }
 
         function showMergeConflictModal(conflictCount, newCount, applyMerge) {
-            const bg = document.getElementById('modalBg');
-            document.getElementById('modalTitle').textContent = '⚠️ تعارض في البيانات';
-            document.getElementById('modalBody').innerHTML =
-                `التقرير المراد دمجه يحتوي على:<br>` +
-                `• <strong>${newCount}</strong> سؤال جديد (لم يُجَب عنه في التقرير الحالي)<br>` +
-                `• <strong>${conflictCount}</strong> سؤال مُجاب مسبقاً في كلا التقريرين<br><br>` +
-                `كيف تريد معالجة الأسئلة المتعارضة؟`;
+            document.getElementById('mergeModalTitle').textContent = '⚠️ تعارض في البيانات';
+            document.getElementById('mergeModalBody').innerHTML =
+                'التقرير المراد دمجه يحتوي على:<br>' +
+                '• <strong>' + newCount + '</strong> سؤال جديد (لم يُجَب عنه مسبقاً)<br>' +
+                '• <strong>' + conflictCount + '</strong> سؤال مُجاب في كلا التقريرين<br><br>' +
+                'كيف تريد معالجة الأسئلة المتعارضة؟';
 
-            // Rebuild buttons: Keep Current | Overwrite | Cancel
-            const btnsDiv = document.getElementById('modalBg').querySelector('.modal-btns');
-            btnsDiv.innerHTML = `
-                <button class="btn btn-primary" id="mergeKeepBtn">إبقاء الحالي</button>
-                <button class="btn btn-danger" id="mergeOverwriteBtn">استبدال بالجديد</button>
-                <button class="btn btn-ghost" onclick="closeModal()">إلغاء</button>
-            `;
             document.getElementById('mergeKeepBtn').onclick = () => {
-                closeModal();
-                applyMerge(false);   // keep existing values for conflicts
+                closeMergeModal();
+                applyMerge(false);
             };
             document.getElementById('mergeOverwriteBtn').onclick = () => {
-                closeModal();
-                applyMerge(true);    // overwrite with incoming values
+                closeMergeModal();
+                applyMerge(true);
             };
-            bg.classList.add('open');
+            const bg = document.getElementById('mergeModalBg');
+            bg.style.display = 'flex';
+        }
+
+        function closeMergeModal() {
+            document.getElementById('mergeModalBg').style.display = 'none';
         }
 
 function forceRecalculation(workbookXml) {
@@ -6195,7 +6200,13 @@ files['xl/workbook.xml'] = new TextEncoder().encode(workbook);
             document.getElementById('modalBg').classList.add('open');
             document.getElementById('modalConfirm').onclick = () => { closeModal(); if (_mcb) _mcb(); };
         }
-        function closeModal() { document.getElementById('modalBg').classList.remove('open'); }
+        function closeModal() {
+            document.getElementById('modalBg').classList.remove('open');
+            // Always restore original modal buttons (merge modal may have replaced them)
+            document.querySelector('.modal-btns').innerHTML =
+                '<button class="btn btn-danger" id="modalConfirm">تأكيد</button>' +
+                '<button class="btn btn-ghost" onclick="closeModal()">إلغاء</button>';
+        }
         let _toastTimer;
         function showToast(msg) {
             const t = document.getElementById('toast');
