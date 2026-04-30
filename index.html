@@ -1182,11 +1182,12 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
     </div>
 
     <!-- MERGE CONFLICT MODAL -->
-    <div class="modal-bg" id="mergeModalBg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center;">
-        <div class="modal">
+    <div class="modal-bg" id="mergeModalBg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center;padding:12px;">
+        <div class="modal" style="max-width:620px;width:100%;max-height:90vh;display:flex;flex-direction:column;">
             <h3 id="mergeModalTitle"></h3>
-            <p id="mergeModalBody"></p>
-            <div class="modal-btns">
+            <p id="mergeModalBody" style="margin-bottom:8px;"></p>
+            <div id="mergeConflictList" style="overflow-y:auto;flex:1;margin-bottom:14px;border:1px solid var(--border);border-radius:8px;max-height:52vh;"></div>
+            <div class="modal-btns" style="flex-shrink:0;">
                 <button class="btn btn-primary"  id="mergeKeepBtn">إبقاء الحالي</button>
                 <button class="btn btn-danger"   id="mergeOverwriteBtn">استبدال بالجديد</button>
                 <button class="btn btn-ghost"    onclick="closeMergeModal()">إلغاء</button>
@@ -5987,6 +5988,21 @@ function setNote(ik, val) {
                     return;
                 }
 
+                // Build a label map: mapKey → {sectionTitle, questionText}
+                const labelMap = {};
+                FORM_DATA.forEach(sec => {
+                    let idx = 0;
+                    sec.subsections.forEach(sub => {
+                        sub.items.forEach(item => {
+                            labelMap[sec.key + '__' + idx] = {
+                                section: sec.title,
+                                text: item.text
+                            };
+                            idx++;
+                        });
+                    });
+                });
+
                 // Conflicts: question answered in BOTH reports
                 const conflicts = Object.keys(incomingScores).filter(
                     k => scores[k] !== undefined && incomingScores[k] !== undefined
@@ -5994,6 +6010,14 @@ function setNote(ik, val) {
                 const newEntries = Object.keys(incomingScores).filter(
                     k => scores[k] === undefined
                 );
+
+                // Build rich conflict details for display
+                const conflictDetails = conflicts.map(k => ({
+                    key:      k,
+                    label:    labelMap[k] || { section: '', text: k },
+                    current:  scores[k],
+                    incoming: incomingScores[k]
+                }));
 
                 // Apply merge: overwriteConflicts=true → replace, false → keep current
                 function applyMerge(overwriteConflicts) {
@@ -6030,7 +6054,7 @@ function setNote(ik, val) {
                 }
 
                 if (conflicts.length > 0) {
-                    showMergeConflictModal(conflicts.length, newEntries.length, applyMerge);
+                    showMergeConflictModal(conflictDetails, newEntries.length, applyMerge);
                 } else {
                     applyMerge(false);
                 }
@@ -6042,13 +6066,44 @@ function setNote(ik, val) {
             event.target.value = '';
         }
 
-        function showMergeConflictModal(conflictCount, newCount, applyMerge) {
+        function showMergeConflictModal(conflictDetails, newCount, applyMerge) {
+            const scoreLabel = v => v === 'N/A' ? 'N/A' : v === 0 ? '0 ✗' : v === 1 ? '1 ◑' : v === 2 ? '2 ✓' : '—';
+            const scoreColor = v => v === 0 ? '#e74c3c' : v === 1 ? '#e67e22' : v === 2 ? '#27ae60' : '#999';
+
             document.getElementById('mergeModalTitle').textContent = '⚠️ تعارض في البيانات';
             document.getElementById('mergeModalBody').innerHTML =
-                'التقرير المراد دمجه يحتوي على:<br>' +
-                '• <strong>' + newCount + '</strong> سؤال جديد (لم يُجَب عنه مسبقاً)<br>' +
-                '• <strong>' + conflictCount + '</strong> سؤال مُجاب في كلا التقريرين<br><br>' +
-                'كيف تريد معالجة الأسئلة المتعارضة؟';
+                'التقرير الجديد يحتوي على ' +
+                '<strong>' + newCount + '</strong> سؤال جديد و' +
+                '<strong> ' + conflictDetails.length + '</strong> سؤال متعارض (مُجاب في كلا التقريرين).<br>' +
+                'راجع الأسئلة المتعارضة أدناه ثم اختر كيفية المعالجة:';
+
+            // Build conflict list
+            let lastSection = '';
+            const rows = conflictDetails.map(d => {
+                let sectionHeader = '';
+                if (d.label.section !== lastSection) {
+                    lastSection = d.label.section;
+                    sectionHeader = '<div style="background:var(--primary);color:#fff;padding:5px 10px;font-size:11px;font-weight:700;direction:rtl;">' +
+                        d.label.section + '</div>';
+                }
+                const shortText = d.label.text.length > 90
+                    ? d.label.text.slice(0, 90) + '…'
+                    : d.label.text;
+                return sectionHeader +
+                    '<div style="display:flex;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid var(--border-light);direction:rtl;">' +
+                        '<div style="flex:1;font-size:12px;color:var(--text);line-height:1.4;">' + shortText + '</div>' +
+                        '<div style="display:flex;gap:4px;flex-shrink:0;align-items:center;">' +
+                            '<span style="font-size:10px;color:var(--text-muted);">حالي:</span>' +
+                            '<span style="font-size:12px;font-weight:700;color:' + scoreColor(d.current)  + ';min-width:28px;text-align:center;">' + scoreLabel(d.current)  + '</span>' +
+                            '<span style="font-size:14px;color:var(--text-dim);">→</span>' +
+                            '<span style="font-size:10px;color:var(--text-muted);">جديد:</span>' +
+                            '<span style="font-size:12px;font-weight:700;color:' + scoreColor(d.incoming) + ';min-width:28px;text-align:center;">' + scoreLabel(d.incoming) + '</span>' +
+                        '</div>' +
+                    '</div>';
+            }).join('');
+
+            document.getElementById('mergeConflictList').innerHTML = rows ||
+                '<div style="padding:12px;text-align:center;color:var(--text-muted);">لا توجد تعارضات</div>';
 
             document.getElementById('mergeKeepBtn').onclick = () => {
                 closeMergeModal();
@@ -6058,8 +6113,7 @@ function setNote(ik, val) {
                 closeMergeModal();
                 applyMerge(true);
             };
-            const bg = document.getElementById('mergeModalBg');
-            bg.style.display = 'flex';
+            document.getElementById('mergeModalBg').style.display = 'flex';
         }
 
         function closeMergeModal() {
