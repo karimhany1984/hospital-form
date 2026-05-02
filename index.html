@@ -1141,7 +1141,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
                 <h3>أقسام النموذج</h3>
                 <div class="sidebar-total">
                     <span class="score-big" id="sbTotalScore">0</span>
-                    <span class="score-max">/ 1522 نقطة</span>
+                    <span class="score-max" id="sbMaxScore">/ — نقطة</span>
                     <span class="pct-badge" id="sbTotalPct">0%</span>
                 </div>
             </div>
@@ -5305,7 +5305,98 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
           </div>
         </div>`;
 }
-		
+		/*function showSection(key) {
+            if (key === 'home') { showHome(); return; }
+            if (key === 'summary') { currentSection = 'summary'; buildSidebarNav(); renderSummary(); return; }
+
+            currentSection = key;
+            buildSidebarNav();
+            document.getElementById('mnHome')?.classList.remove('active');
+            document.getElementById('mnSummary')?.classList.remove('active');
+
+            const sec = FORM_DATA.find(s => s.key === key);
+            if (!sec) return;
+
+            const { earned, effectiveMax: secEffMax } = getSectionScore(key);
+            const pct = secEffMax > 0 ? Math.round(earned / secEffMax * 100) : 0;
+            const pctClass = pct >= 80 ? 'pct-high' : pct >= 50 ? 'pct-mid' : pct > 0 ? 'pct-low' : 'pct-zero';
+            const pctColor = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--orange)' : pct > 0 ? 'var(--red)' : 'var(--text-dim)';
+
+            // Inside showSection(), after building subsections
+            let subsHtml = '';
+            let itemGlobalIdx = 0;
+            sec.subsections.forEach(sub => {
+                subsHtml += `<div class="subsec-title">${sub.title}</div><div class="subsec-body">`;
+                sub.items.forEach(item => {
+                    const ik = `${key}__${itemGlobalIdx}`;
+                    const sc = scores[ik];
+                    const hasNote = !!notes[ik];
+                    let rowClass = '';
+                    if (sc === 0) rowClass = 'scored-0';
+                    else if (sc === 1) rowClass = 'scored-1';
+                    else if (sc === 2) rowClass = 'scored-2';
+                    else if (sc === 'N/A') rowClass = 'scored-na';
+
+                    // Determine if this item is binary-only
+                    const isBinary = item.binaryOnly === true;
+
+                    subsHtml += `
+          <div class="item-row ${rowClass}" id="irow-${ik}">
+           <div class="item-num">${itemGlobalIdx + 1}</div>
+            <div class="item-text">${esc(item.text)}</div>
+            <div class="item-controls">
+              <button class="sbtn ${sc === 0 ? 's0' : ''}" onclick="setScore('${ik}', 0, '${key}')">0</button>
+              ${isBinary
+                            ? `<button class="sbtn-disabled" disabled>1</button>`
+                            : `<button class="sbtn ${sc === 1 ? 's1' : ''}" onclick="setScore('${ik}', 1, '${key}')">1</button>`
+                        }
+              <button class="sbtn ${sc === 2 ? 's2' : ''}" onclick="setScore('${ik}', 2, '${key}')">2</button>
+              <button class="sbtn ${sc === 'N/A' ? 'sna' : ''}" onclick="setScore('${ik}', 'N/A', '${key}')">N/A</button>
+              <button class="nbtn ${hasNote ? 'has-note' : ''}" id="nbtn-${ik}" onclick="toggleNote('${ik}')">📝</button>
+            </div>
+          </div>
+          <div class="note-area ${hasNote ? 'open' : ''}" id="note-${ik}">
+    <textarea id="note-text-${ik}" name="note_${ik}" placeholder="ملاحظة..." oninput="setNote('${ik}', this.value)">${esc(notes[ik] || '')}</textarea>
+  </div>
+        `;
+                    itemGlobalIdx++;
+                });
+                subsHtml += `</div>`;
+            });
+
+            const idx = FORM_DATA.findIndex(s => s.key === key);
+            const prevKey = idx > 0 ? FORM_DATA[idx - 1].key : null;
+            const nextKey = idx < FORM_DATA.length - 1 ? FORM_DATA[idx + 1].key : null;
+
+            document.getElementById('mainContent').innerHTML = `
+        <div class="section-view">
+          <div class="section-title-bar">
+            <div class="stb-icon ic-${key}"></div>
+            <div class="stb-text">
+              <h2>${sec.title}</h2>
+              <p>الحد الأقصى: ${sec.max} نقطة · ${sec.subsections.reduce((a, s) => a + s.items.length, 0)} عنصر</p>
+            </div>
+            <div class="stb-score">
+              <div class="big" id="sec-score-${key}">${earned}</div>
+              <div class="small">من ${sec.max}</div>
+              <span class="pct" style="background:${pctColor}20;color:${pctColor}" id="sec-pct-${key}">${pct}%</span>
+            </div>
+          </div>
+          <div class="legend">
+            <div class="legend-item"><div class="legend-dot dot-2"></div> 2 متوفر بالكامل</div>
+            <div class="legend-item"><div class="legend-dot dot-1"></div> 1 متوفر جزئياً</div>
+            <div class="legend-item"><div class="legend-dot dot-0"></div> 0 غير متوفر</div>
+            <div class="legend-item"><div class="legend-dot dot-na"></div> N/A غير قابل</div>
+          </div>
+          ${subsHtml}
+          <div class="sec-nav">
+            ${prevKey ? `<button class="sec-nav-btn" onclick="showSection('${prevKey}')">← ${FORM_DATA.find(s => s.key === prevKey).title}</button>` : '<div></div>'}
+            ${nextKey ? `<button class="sec-nav-btn primary" onclick="showSection('${nextKey}')">${FORM_DATA.find(s => s.key === nextKey).title} →</button>`
+                    : `<button class="sec-nav-btn primary" onclick="showSection('summary')">📈 عرض الملخص</button>`}
+          </div>
+        </div>`;
+        }*/
+
         // ═══════════════════════════════════════
         // SUMMARY
         // ═══════════════════════════════════════
@@ -5314,13 +5405,13 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
             document.getElementById('mnHome')?.classList.remove('active');
 
             let grandEarned = 0, grandMax = 0;
-            FORM_DATA.forEach(s => { const { earned } = getSectionScore(s.key); grandEarned += earned; grandMax += s.max; });
+            FORM_DATA.forEach(s => { const { earned, effectiveMax } = getSectionScore(s.key); grandEarned += earned; grandMax += effectiveMax; });
             const grandPct = grandMax > 0 ? Math.round(grandEarned / grandMax * 100) : 0;
             const pctColor = grandPct >= 80 ? '#27ae60' : grandPct >= 60 ? '#e8a020' : grandPct >= 40 ? '#d35400' : '#c0392b';
 
             let cardsHtml = FORM_DATA.map(sec => {
-                const { earned } = getSectionScore(sec.key);
-                const pct = sec.max > 0 ? Math.round(earned / sec.max * 100) : 0;
+                const { earned, effectiveMax: secMax } = getSectionScore(sec.key);
+                const pct = secMax > 0 ? Math.round(earned / secMax * 100) : 0;
                 const fillClass = pct >= 80 ? 'fill-h' : pct >= 50 ? 'fill-m' : pct > 0 ? 'fill-l' : '';
                 const fillColor = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--orange)' : pct > 0 ? 'var(--red)' : 'var(--border)';
                 const pctColor2 = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--orange)' : pct > 0 ? 'var(--red)' : 'var(--text-dim)';
@@ -5329,7 +5420,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
           <div class="sum-bar"><div class="sum-bar-fill" style="width:${pct}%;background:${fillColor}"></div></div>
           <div class="sum-scores">
             <span class="sum-earned">${earned}</span>
-            <span class="sum-max">من ${sec.max}</span>
+            <span class="sum-max">من ${secMax}</span>
             <span class="sum-pct" style="color:${pctColor2}">${pct}%</span>
           </div>
         </div>`;
@@ -5431,22 +5522,26 @@ function setNote(ik, val) {
 
         function getSectionScore(key) {
             const sec = FORM_DATA.find(s => s.key === key);
-            if (!sec) return { earned: 0 };
-            let earned = 0, idx = 0;
+            if (!sec) return { earned: 0, effectiveMax: 0 };
+            let earned = 0, effectiveMax = 0, idx = 0;
             sec.subsections.forEach(sub => sub.items.forEach(() => {
                 const sc = scores[`${key}__${idx}`];
-                if (sc === 1) earned += 1;
-                else if (sc === 2) earned += 2;
+                // Only numeric answers (0/1/2) count toward the max — matching Excel COUNT() logic
+                if (sc === 0 || sc === 1 || sc === 2) {
+                    effectiveMax += 2;
+                    if (sc === 1) earned += 1;
+                    else if (sc === 2) earned += 2;
+                }
                 idx++;
             }));
-            return { earned };
+            return { earned, effectiveMax };
         }
 
         function updateSectionScoreDisplay(key) {
             const sec = FORM_DATA.find(s => s.key === key);
             if (!sec) return;
-            const { earned } = getSectionScore(key);
-            const pct = sec.max > 0 ? Math.round(earned / sec.max * 100) : 0;
+            const { earned, effectiveMax: secEffMax } = getSectionScore(key);
+            const pct = secEffMax > 0 ? Math.round(earned / secEffMax * 100) : 0;
             const el = document.getElementById(`sec-score-${key}`);
             const pctEl = document.getElementById(`sec-pct-${key}`);
             if (el) el.textContent = earned;
@@ -5476,15 +5571,18 @@ function setNote(ik, val) {
             let grand = 0; FORM_DATA.forEach(s => { const { earned } = getSectionScore(s.key); grand += earned; });
             const sb = document.getElementById('sbTotalScore');
             const sbp = document.getElementById('sbTotalPct');
+            let grandMaxDyn = 0; FORM_DATA.forEach(s => { const { effectiveMax } = getSectionScore(s.key); grandMaxDyn += effectiveMax; });
             if (sb) sb.textContent = grand;
-            if (sbp) sbp.textContent = `${Math.round(grand / 1522 * 100)}%`;
+            if (sbp) sbp.textContent = grandMaxDyn > 0 ? `${Math.round(grand / grandMaxDyn * 100)}%` : '0%';
+            const sbMax = document.getElementById('sbMaxScore');
+            if (sbMax) sbMax.textContent = grandMaxDyn > 0 ? `/ ${grandMaxDyn} نقطة` : '/ — نقطة';
         }
         function updateMetaResult() {
             let grandEarned = 0, grandMax = 0;
             FORM_DATA.forEach(sec => {
-                const { earned } = getSectionScore(sec.key);
+                const { earned, effectiveMax } = getSectionScore(sec.key);
                 grandEarned += earned;
-                grandMax += sec.max;
+                grandMax += effectiveMax;
             });
             const pct = grandMax > 0 ? Math.round(grandEarned / grandMax * 100) : 0;
             meta.result = `${pct}%`;
