@@ -1,4 +1,4 @@
-const CACHE_NAME = 'trial-dynamic-v29';
+const CACHE_NAME = 'trial-dynamic-v30';
 const BASE = '/hospital-form/';  // Match your GitHub Pages repo name
 
 // Files that MUST be available offline immediately
@@ -97,7 +97,6 @@ async function handleShareTarget(request) {
             const arrayBuffer = await file.arrayBuffer();
             const base64 = bufferToBase64(arrayBuffer);
 
-            // Store the shared file temporarily in the cache as a special key
             const sharedPayload = JSON.stringify({
                 name: file.name,
                 type: file.type,
@@ -105,13 +104,15 @@ async function handleShareTarget(request) {
                 timestamp: Date.now()
             });
 
+            // Use an absolute URL key so cache.match() always resolves correctly
+            const sharedFileKey = self.location.origin + BASE + 'shared-file';
             const cache = await caches.open(CACHE_NAME);
             await cache.put(
-                new Request('./shared-file'),
+                new Request(sharedFileKey),
                 new Response(sharedPayload, { headers: { 'Content-Type': 'application/json' } })
             );
 
-            // Notify any open clients about the shared file
+            // Notify any clients already open (foreground case)
             const clients = await self.clients.matchAll({ type: 'window' });
             for (const client of clients) {
                 client.postMessage({
@@ -126,8 +127,8 @@ async function handleShareTarget(request) {
         console.error('[SW] Share target error:', err);
     }
 
-    // Always redirect back to the app after handling
-    return Response.redirect('./', 303);
+    // Redirect AFTER all async work is done
+    return Response.redirect(BASE, 303);
 }
 
 // Utility: ArrayBuffer to base64
@@ -146,8 +147,14 @@ self.addEventListener('message', (event) => {
     if (event.data && event.data.type === 'SKIP_WAITING') {
         self.skipWaiting();
     }
-    // Let the page ask which cache name to use — so it never needs to hardcode it
+    // Let the page ask which cache name to use — no hardcoding needed
     if (event.data && event.data.type === 'GET_CACHE_NAME') {
-        event.source.postMessage({ type: 'CACHE_NAME', cacheName: CACHE_NAME });
+        // Reply on the MessageChannel port if provided, otherwise fall back to event.source
+        const replyPort = event.ports && event.ports[0];
+        if (replyPort) {
+            replyPort.postMessage({ type: 'CACHE_NAME', cacheName: CACHE_NAME });
+        } else if (event.source) {
+            event.source.postMessage({ type: 'CACHE_NAME', cacheName: CACHE_NAME });
+        }
     }
 });
