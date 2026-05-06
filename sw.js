@@ -1,4 +1,4 @@
-const CACHE_NAME = 'trial-dynamic-v28';
+const CACHE_NAME = 'trial-dynamic-v29';
 const BASE = '/hospital-form/';  // Match your GitHub Pages repo name
 
 // Files that MUST be available offline immediately
@@ -46,15 +46,15 @@ self.addEventListener('activate', e => {
 
 // Fetch: Cache First, then Network
 self.addEventListener('fetch', e => {
-    // Skip non-GET requests
-    if (e.request.method !== 'GET') return;
-    
-    // Handle share target POST request
+    // Handle share target POST request — must be checked BEFORE skipping non-GET
     const url = new URL(e.request.url);
-    if (url.pathname.endsWith('/share-target') && e.request.method === 'POST') {
+    if (e.request.method === 'POST' && url.pathname.includes('share-target')) {
         e.respondWith(handleShareTarget(e.request));
         return;
     }
+
+    // Skip non-GET requests
+    if (e.request.method !== 'GET') return;
     
     // Skip cross-origin requests for better reliability
     if (!e.request.url.startsWith(self.location.origin)) return;
@@ -145,5 +145,9 @@ function bufferToBase64(buffer) {
 self.addEventListener('message', (event) => {
     if (event.data && event.data.type === 'SKIP_WAITING') {
         self.skipWaiting();
+    }
+    // Let the page ask which cache name to use — so it never needs to hardcode it
+    if (event.data && event.data.type === 'GET_CACHE_NAME') {
+        event.source.postMessage({ type: 'CACHE_NAME', cacheName: CACHE_NAME });
     }
 });
