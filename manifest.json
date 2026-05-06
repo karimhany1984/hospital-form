@@ -23,7 +23,7 @@
     }
   ],
   "share_target": {
-    "action": "./share-target",
+    "action": "/hospital-form/share-target",
     "method": "POST",
     "enctype": "multipart/form-data",
     "params": {
@@ -33,6 +33,7 @@
           "accept": [
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "application/vnd.ms-excel",
+            "application/octet-stream",
             ".xlsx",
             ".xls"
           ]
