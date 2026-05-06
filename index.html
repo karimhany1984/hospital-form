@@ -6569,9 +6569,18 @@ files['xl/workbook.xml'] = new TextEncoder().encode(workbook);
 
     // 2. On startup: check if SW stored a shared file while the app was closed
     async function checkPendingSharedFile() {
-        if (!('caches' in window)) return;
+        if (!('caches' in window) || !('serviceWorker' in navigator)) return;
         try {
-            const cache = await caches.open('hospital-inspector-v1');
+            // Ask the SW which cache name it is currently using — no hardcoding needed
+            const cacheName = await new Promise((resolve) => {
+                const mc = new MessageChannel();
+                mc.port1.onmessage = (e) => {
+                    if (e.data && e.data.type === 'CACHE_NAME') resolve(e.data.cacheName);
+                };
+                navigator.serviceWorker.controller.postMessage({ type: 'GET_CACHE_NAME' }, [mc.port2]);
+            });
+
+            const cache = await caches.open(cacheName);
             const response = await cache.match('./shared-file');
             if (!response) return;
             const payload = await response.json();
