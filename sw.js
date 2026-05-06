@@ -1,4 +1,4 @@
-const CACHE_NAME = 'trial-dynamic-v26';
+const CACHE_NAME = 'trial-dynamic-v28';
 const BASE = '/hospital-form/';  // Match your GitHub Pages repo name
 
 // Files that MUST be available offline immediately
@@ -6,7 +6,6 @@ const PRE_CACHE_ASSETS = [
     BASE + 'index.html',
     BASE + 'manifest.json',
     BASE + 'icon.png',
-   
 ];
 
 // Install: Cache essential files with error handling
@@ -50,6 +49,13 @@ self.addEventListener('fetch', e => {
     // Skip non-GET requests
     if (e.request.method !== 'GET') return;
     
+    // Handle share target POST request
+    const url = new URL(e.request.url);
+    if (url.pathname.endsWith('/share-target') && e.request.method === 'POST') {
+        e.respondWith(handleShareTarget(e.request));
+        return;
+    }
+    
     // Skip cross-origin requests for better reliability
     if (!e.request.url.startsWith(self.location.origin)) return;
 
@@ -79,4 +85,65 @@ self.addEventListener('fetch', e => {
             });
         })
     );
+});
+
+// Share Target handler
+async function handleShareTarget(request) {
+    try {
+        const formData = await request.formData();
+        const file = formData.get('file');
+
+        if (file && file instanceof File) {
+            const arrayBuffer = await file.arrayBuffer();
+            const base64 = bufferToBase64(arrayBuffer);
+
+            // Store the shared file temporarily in the cache as a special key
+            const sharedPayload = JSON.stringify({
+                name: file.name,
+                type: file.type,
+                data: base64,
+                timestamp: Date.now()
+            });
+
+            const cache = await caches.open(CACHE_NAME);
+            await cache.put(
+                new Request('./shared-file'),
+                new Response(sharedPayload, { headers: { 'Content-Type': 'application/json' } })
+            );
+
+            // Notify any open clients about the shared file
+            const clients = await self.clients.matchAll({ type: 'window' });
+            for (const client of clients) {
+                client.postMessage({
+                    type: 'SHARED_FILE',
+                    name: file.name,
+                    fileType: file.type,
+                    data: base64
+                });
+            }
+        }
+    } catch (err) {
+        console.error('[SW] Share target error:', err);
+    }
+
+    // Always redirect back to the app after handling
+    return Response.redirect('./', 303);
+}
+
+// Utility: ArrayBuffer to base64
+function bufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
+}
+
+// Listen for messages from clients to skip waiting
+self.addEventListener('message', (event) => {
+    if (event.data && event.data.type === 'SKIP_WAITING') {
+        self.skipWaiting();
+    }
 });
