@@ -1,11 +1,12 @@
-const CACHE_NAME = 'trial-dynamic-v33';
-const BASE = '/hospital-form/';  // Match your GitHub Pages repo name
+const CACHE_NAME = 'trial-dynamic-v60';
+const BASE = '/trial/';  // Match your GitHub Pages repo name
 
 // Files that MUST be available offline immediately
 const PRE_CACHE_ASSETS = [
     BASE + 'index.html',
     BASE + 'manifest.json',
     BASE + 'icon.png',
+   
 ];
 
 // Install: Cache essential files with error handling
@@ -147,14 +148,13 @@ self.addEventListener('message', (event) => {
     if (event.data && event.data.type === 'SKIP_WAITING') {
         self.skipWaiting();
     }
-    // Let the page ask which cache name to use — no hardcoding needed
+   
     if (event.data && event.data.type === 'GET_CACHE_NAME') {
-        // Reply on the MessageChannel port if provided, otherwise fall back to event.source
-        const replyPort = event.ports && event.ports[0];
-        if (replyPort) {
-            replyPort.postMessage({ type: 'CACHE_NAME', cacheName: CACHE_NAME });
-        } else if (event.source) {
-            event.source.postMessage({ type: 'CACHE_NAME', cacheName: CACHE_NAME });
-        }
+    const replyPort = event.ports && event.ports[0];
+    if (replyPort) {
+        replyPort.postMessage({ type: 'CACHE_NAME', cacheName: CACHE_NAME, base: BASE }); // ← add base
+    } else if (event.source) {
+        event.source.postMessage({ type: 'CACHE_NAME', cacheName: CACHE_NAME, base: BASE });
     }
+}
 });
