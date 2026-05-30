@@ -1,7 +1,7 @@
 {
-  "name": "نموذج متابعةالمستشفيات",
-  "short_name": "متابعةالمستشفيات",
-  "description": "إدارة متابعة المديريات - نموذج متابعةالمستشفيات",
+  "name": "نموذج متابعة المستشفيات",
+  "short_name": "متابعة المستشفيات",
+  "description": "إدارة متابعة المديريات - نموذج متابعة المستشفيات",
   "start_url": "https://karimhany1984.github.io/hospital-form/index.html",
   "scope": "https://karimhany1984.github.io/hospital-form/",
   "display": "standalone",
