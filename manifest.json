@@ -23,7 +23,7 @@
     }
   ],
   "share_target": {
-    "action": "/trial/share-target",
+    "action": "/hospital-form/share-target",
     "method": "POST",
     "enctype": "multipart/form-data",
     "params": {
