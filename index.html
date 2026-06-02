@@ -6834,41 +6834,16 @@ function setNote(ik, val) {
         }
 
         // ═══════════════════════════════════════
-        // PLATFORM DETECTION
+        // ALWAYS USE BASE64 - NO PLATFORM DETECTION
         // ═══════════════════════════════════════
-        function getIOSVersion() {
-            const ua = navigator.userAgent;
-            if (/iP(hone|od|ad)/.test(ua)) {
-                const match = ua.match(/OS (\d+)_/);
-                if (match) return parseInt(match[1], 10);
-            }
-            return null; // not iOS
-        }
-
-        function shouldUseExternalTemplate() {
-            const iosVersion = getIOSVersion();
-            // Old iOS (<=15) -> external template (avoids base64 memory spike)
-            if (iosVersion !== null && iosVersion <= 15) return true;
-            // iOS 16+, Android, Desktop -> base64 (fast, no network needed)
-            return false;
-        }
-
-        const _iosVer = getIOSVersion() ?? 99;
-        const _canCompress = typeof CompressionStream !== 'undefined' && _iosVer >= 16;
+        const _canCompress = typeof CompressionStream !== 'undefined';
 
         // ═══════════════════════════════════════
-        // HYBRID TEMPLATE LOADER
+        // BASE64 TEMPLATE LOADER
         // ═══════════════════════════════════════
         async function loadTemplateHybrid() {
-            if (shouldUseExternalTemplate()) {
-                showToast('⚙️ وضع الأجهزة القديمة مفعّل');
-                await new Promise(r => setTimeout(r, 40));
-                const response = await fetch('./template.xlsx');
-                if (!response.ok) throw new Error('تعذّر تحميل القالب: ' + response.status);
-                return new Uint8Array(await response.arrayBuffer());
-            }
-            showToast('⚡ وضع الأداء السريع');
-            await new Promise(r => setTimeout(r, 40));
+            showToast('⚡ جاري تحضير القالب...');
+            await new Promise(r => setTimeout(r, 20));
             const binary = atob(TEMPLATE_B64);
             const bytes = new Uint8Array(binary.length);
             for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -6881,34 +6856,54 @@ function setNote(ik, val) {
             for (const [name, rawData] of Object.entries(files)) {
                 const nb = new TextEncoder().encode(name);
                 let comp = rawData, cm = 0;
+                // Try compression if available, but don't hang if it fails
                 if (_canCompress) {
                     try {
                         const cs = new CompressionStream('deflate-raw');
                         const writer = cs.writable.getWriter();
                         const reader = cs.readable.getReader();
                         const chunks = [];
-                        const pump = () => reader.read().then(({ done, value }) => {
-                            if (done) return;
-                            chunks.push(value); return pump();
-                        });
-                        writer.write(rawData); writer.close();
-                        await pump();
+                        let done = false;
+                        while (!done) {
+                            const { done: d, value } = await reader.read();
+                            done = d;
+                            if (value) chunks.push(value);
+                        }
+                        writer.close();
                         const c = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
-                        let p = 0; for (const ch of chunks) { c.set(ch, p); p += ch.length; }
-                        if (c.length < rawData.length) { comp = c; cm = 8; }
-                    } catch(e) { comp = rawData; cm = 0; }
+                        let p = 0;
+                        for (const ch of chunks) {
+                            c.set(ch, p);
+                            p += ch.length;
+                        }
+                        if (c.length < rawData.length) {
+                            comp = c;
+                            cm = 8;
+                        }
+                    } catch(e) {
+                        comp = rawData;
+                        cm = 0;
+                    }
                 }
                 const crc = crc32(rawData);
                 const lh = new Uint8Array([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, ...nb, ...comp]);
                 const cd = new Uint8Array([0x50, 0x4B, 0x01, 0x02, 0x1E, 0x03, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, ...u32le(offset), ...nb]);
-                lhs.push(lh); cds.push(cd); offset += lh.length;
+                lhs.push(lh);
+                cds.push(cd);
+                offset += lh.length;
             }
             const cdOff = offset, cdSz = cds.reduce((a, b) => a + b.length, 0);
             const eocd = new Uint8Array([0x50, 0x4B, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, ...u16le(cds.length), ...u16le(cds.length), ...u32le(cdSz), ...u32le(cdOff), 0x00, 0x00]);
             const total = cdOff + cdSz + eocd.length, out = new Uint8Array(total);
             let pos = 0;
-            for (const lh of lhs) { out.set(lh, pos); pos += lh.length; }
-            for (const cd of cds) { out.set(cd, pos); pos += cd.length; }
+            for (const lh of lhs) {
+                out.set(lh, pos);
+                pos += lh.length;
+            }
+            for (const cd of cds) {
+                out.set(cd, pos);
+                pos += cd.length;
+            }
             out.set(eocd, pos);
             return out;
         }
@@ -6929,16 +6924,7 @@ function setNote(ik, val) {
             return sheet;
         }
 
-        // Patch sharedString at index: append user value as second rich-text run
-        function patchSharedString(ss, index, userValue) {
-            const esc = v => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            const vRun = '<r><rPr><sz val="16"/><rFont val="Times New Roman"/><family val="1"/></rPr><t xml:space="preserve"> ' + esc(userValue) + '</t></r>';
-            let i = -1;
-            return ss.replace(/<si>([\s\S]*?)<\/si>/g, (m, inner) => {
-                i++;
-                return i === index ? '<si>' + inner + vRun + '</si>' : m;
-            });
-        }
+        // Unused function removed - patchSharedString was not being called
 
         // Read a cell value from sheet XML
         function readCellValue(sheet, cellRef) {
@@ -7330,10 +7316,9 @@ function forceRecalculation(workbookXml) {
 }
         async function exportExcel() {
             showToast('جاري تجهيز الملف...');
-            await new Promise(r => setTimeout(r, 50)); // yield to UI thread
+            await new Promise(r => setTimeout(r, 30)); // yield to UI thread
             try {
-			
-                // Load template: external file for iOS ≤15, base64 for iOS 16+ / Android / Desktop
+                // Load template from base64 (always, no platform checks)
                 const templateBuf = await loadTemplateHybrid();
 
                 // Unzip template — preserves ALL files (images, styles, drawings...)
