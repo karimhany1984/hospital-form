@@ -6839,14 +6839,56 @@ function setNote(ik, val) {
         const _canCompress = typeof CompressionStream !== 'undefined';
 
         // ═══════════════════════════════════════
-        // BASE64 TEMPLATE LOADER
+        // TEMPLATE LOADER (from SW cache or network)
         // ═══════════════════════════════════════
-     async function loadTemplateHybrid() {
-    const binary = atob(TEMPLATE_B64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes;
-}
+        async function loadTemplateFromCache(filename) {
+            // Ask the active SW for its CACHE_NAME and BASE path, then fetch from cache
+            let cacheName = null, base = '/hospital-form/';
+            if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+                try {
+                    const result = await new Promise((resolve) => {
+                        const mc = new MessageChannel();
+                        const timer = setTimeout(() => resolve(null), 3000);
+                        mc.port1.onmessage = (e) => { clearTimeout(timer); resolve(e.data); };
+                        navigator.serviceWorker.controller.postMessage({ type: 'GET_CACHE_NAME' }, [mc.port2]);
+                    });
+                    if (result) { cacheName = result.cacheName; if (result.base) base = result.base; }
+                } catch(e) { /* ignore */ }
+            }
+
+            // Try reading directly from the SW cache
+            if (cacheName && typeof caches !== 'undefined') {
+                try {
+                    const cache = await caches.open(cacheName);
+                    // Try both with and without origin
+                    const urls = [
+                        location.origin + base + filename,
+                        base + filename
+                    ];
+                    for (const url of urls) {
+                        const resp = await cache.match(url);
+                        if (resp && resp.ok) {
+                            const buf = await resp.arrayBuffer();
+                            return new Uint8Array(buf);
+                        }
+                    }
+                } catch(e) { /* fall through to network */ }
+            }
+
+            // Fallback: fetch from network (also caches via SW fetch handler)
+            const resp = await fetch(base + filename);
+            if (!resp.ok) throw new Error('فشل تحميل القالب: ' + filename);
+            const buf = await resp.arrayBuffer();
+            return new Uint8Array(buf);
+        }
+
+        async function loadTemplateHybrid() {
+            return loadTemplateFromCache('template.xlsx');
+        }
+
+        async function loadWordTemplateHybrid() {
+            return loadTemplateFromCache('template.docx');
+        }
 
         async function zipWrite(files) {
     const lhs = [], cds = [];
@@ -7613,7 +7655,7 @@ function forceRecalculation(workbookXml) {
             showToast('جاري إنشاء تقرير Word...');
             await new Promise(r => setTimeout(r, 50));
             try {
-                const templateBuf = b64ToUint8Array(WORD_TEMPLATE_B64);
+                const templateBuf = await loadWordTemplateHybrid();
                 const files = await zipRead(templateBuf);
                 let docXml = new TextDecoder('utf-8').decode(files['word/document.xml']);
 
