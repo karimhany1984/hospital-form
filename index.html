@@ -6856,34 +6856,35 @@ function setNote(ik, val) {
                 const nb = new TextEncoder().encode(name);
                 let comp = rawData, cm = 0;
                 // Try compression if available, but don't hang if it fails
-                if (_canCompress) {
-                    try {
-                        const cs = new CompressionStream('deflate-raw');
-                        const writer = cs.writable.getWriter();
-                        const reader = cs.readable.getReader();
-                        const chunks = [];
-                        let done = false;
-                        while (!done) {
-                            const { done: d, value } = await reader.read();
-                            done = d;
-                            if (value) chunks.push(value);
-                        }
-                        writer.close();
-                        const c = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
-                        let p = 0;
-                        for (const ch of chunks) {
-                            c.set(ch, p);
-                            p += ch.length;
-                        }
-                        if (c.length < rawData.length) {
-                            comp = c;
-                            cm = 8;
-                        }
-                    } catch(e) {
-                        comp = rawData;
-                        cm = 0;
-                    }
-                }
+               if (_canCompress) {
+    try {
+        const cs = new CompressionStream('deflate-raw');
+        const writer = cs.writable.getWriter();
+        const reader = cs.readable.getReader();
+        const chunks = [];
+        const pump = () => reader.read().then(({ done, value }) => {
+            if (done) return;
+            chunks.push(value);
+            return pump();
+        });
+        await writer.write(rawData);
+        await writer.close();
+        await pump();
+        const c = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
+        let p = 0;
+        for (const ch of chunks) {
+            c.set(ch, p);
+            p += ch.length;
+        }
+        if (c.length < rawData.length) {
+            comp = c;
+            cm = 8;
+        }
+    } catch(e) {
+        comp = rawData;
+        cm = 0;
+    }
+}
                 const crc = crc32(rawData);
                 const lh = new Uint8Array([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, ...nb, ...comp]);
                 const cd = new Uint8Array([0x50, 0x4B, 0x01, 0x02, 0x1E, 0x03, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, ...u32le(offset), ...nb]);
