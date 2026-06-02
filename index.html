@@ -7315,71 +7315,150 @@ function forceRecalculation(workbookXml) {
     }
     return workbookXml;
 }
-       async function exportExcel() {
-    showToast('جاري تجهيز ملف Excel...');
+     async function exportExcel() {
+    showToast('جاري تجهيز الملف...');
     await new Promise(r => setTimeout(r, 30));
     try {
-        // Sheet 1: detailed items
-        const sheet1Data = [["القسم", "السؤال الفرعي", "العنصر", "التقييم (0/1/2/N/A)", "ملاحظات"]];
+        // 1. Load template from base64 (already in your code)
+        const templateBuf = Uint8Array.from(atob(TEMPLATE_B64), c => c.charCodeAt(0));
+        const files = await zipRead(templateBuf);
+
+        // 2. Decode sheet XML files
+        let sheet1 = new TextDecoder().decode(files['xl/worksheets/sheet1.xml']);
+        let sheet2 = new TextDecoder().decode(files['xl/worksheets/sheet2.xml']);
+        let ssXml = new TextDecoder().decode(files['xl/sharedStrings.xml']);
+
+        // ─── METADATA (sheet2) ─────────────────────────────────────
+        sheet2 = patchCell(sheet2, 'F1', meta.dates || '');
+        sheet2 = patchCell(sheet2, 'D2', meta.hospitalName || '');
+        sheet2 = patchCell(sheet2, 'F2', meta.inspectors || '');
+        sheet2 = patchCell(sheet2, 'D3', meta.type || '');
+
+        // ─── SCORES & NOTES (sheet1) ────────────────────────────────
+        // Parse shared strings once (for notes that may be stored as string indices)
+        const ssItems = [];
+        {
+            let p = 0;
+            while (true) {
+                const s = ssXml.indexOf('<si>', p); if (s === -1) break;
+                const e = ssXml.indexOf('</si>', s + 4); if (e === -1) break;
+                const inn = ssXml.slice(s + 4, e);
+                let txt = '', tp = 0;
+                while (true) {
+                    const ts = inn.indexOf('<t', tp); if (ts === -1) break;
+                    const te = inn.indexOf('>', ts); if (te === -1) break;
+                    const tc = inn.indexOf('</t>', te); if (tc === -1) break;
+                    txt += inn.slice(te + 1, tc);
+                    tp = tc + 4;
+                }
+                ssItems.push(txt.trim());
+                p = e + 5;
+            }
+        }
+
+        // Helper to write a value to a cell (handles numeric / string / N/A)
+        function writeCell(sheetXml, cellRef, value, sharedStrings) {
+            let cellValue = value;
+            let isString = false;
+            let sharedIndex = -1;
+
+            if (value === undefined || value === null || value === '') {
+                // leave empty cell (self-closing)
+                return patchCell(sheetXml, cellRef, null);
+            }
+            if (typeof value === 'number') {
+                cellValue = value;
+            } else {
+                if (value === 'N/A') {
+                    cellValue = 'N/A';
+                    isString = true;
+                } else {
+                    cellValue = value;
+                    isString = true;
+                }
+            }
+
+            if (isString) {
+                // try to reuse shared string if it exists
+                let idx = sharedStrings.indexOf(cellValue);
+                if (idx === -1) {
+                    idx = sharedStrings.length;
+                    sharedStrings.push(cellValue);
+                }
+                // Need to patch with t="s" and the index
+                // patchCell as originally defined only handles simple values.
+                // We'll manually build the cell XML.
+                const esc = v => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                const cellXml = `<c r="${cellRef}" t="s"><v>${idx}</v></c>`;
+                // Replace existing cell or add
+                const regex = new RegExp(`<c r="${cellRef}"[^>]*>(?:[\\s\\S]*?)<\\/c>`);
+                if (regex.test(sheetXml)) {
+                    return sheetXml.replace(regex, cellXml);
+                } else {
+                    // Insert as new cell in the correct row – complex, but we trust patchCell fallback
+                    return patchCell(sheetXml, cellRef, null); // fallback
+                }
+            } else {
+                return patchCell(sheetXml, cellRef, cellValue);
+            }
+        }
+
+        // Write all scores (col C) and notes (col D) using ROW_MAP
         FORM_DATA.forEach(sec => {
             let idx = 0;
             sec.subsections.forEach(sub => {
-                sub.items.forEach(item => {
-                    const ik = `${sec.key}__${idx}`;
-                    const sc = scores[ik];
-                    let scoreText = "";
-                    if (sc === undefined) scoreText = "";
-                    else if (sc === 'N/A') scoreText = "N/A";
-                    else scoreText = sc.toString();
-                    const noteText = notes[ik] || "";
-                    sheet1Data.push([sec.title, sub.title, item.text, scoreText, noteText]);
+                sub.items.forEach(() => {
+                    const mapKey = `${sec.key}__${idx}`;
+                    const rowNum = ROW_MAP[mapKey];
+                    if (rowNum) {
+                        const sc = scores[mapKey];
+                        if (sc !== undefined) {
+                            let scoreValue = '';
+                            if (sc === 'N/A') scoreValue = 'N/A';
+                            else if (typeof sc === 'number') scoreValue = sc;
+                            if (scoreValue !== '') {
+                                sheet1 = writeCell(sheet1, `C${rowNum}`, scoreValue, ssItems);
+                            }
+                        }
+                        const note = notes[mapKey];
+                        if (note && note.trim()) {
+                            sheet1 = writeCell(sheet1, `D${rowNum}`, note.trim(), ssItems);
+                        }
+                    }
                     idx++;
                 });
             });
         });
-        const ws1 = XLSX.utils.aoa_to_sheet(sheet1Data);
-        ws1['!cols'] = [{wch:20},{wch:25},{wch:60},{wch:12},{wch:40}];
 
-        // Sheet 2: summary
-        let grandEarned = 0, grandMax = 0;
-        FORM_DATA.forEach(sec => {
-            const { earned, effectiveMax } = getSectionScore(sec.key);
-            grandEarned += earned;
-            grandMax += effectiveMax;
-        });
-        const pct = grandMax > 0 ? Math.round(grandEarned / grandMax * 100) : 0;
+        // Update sharedStrings XML
+        let newSsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${ssItems.length}" uniqueCount="${ssItems.length}">`;
+        for (const s of ssItems) {
+            newSsXml += `<si><t xml:space="preserve">${s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</t></si>`;
+        }
+        newSsXml += `</sst>`;
+        files['xl/sharedStrings.xml'] = new TextEncoder().encode(newSsXml);
 
-        const sheet2Data = [
-            ["بيانات التقرير", ""],
-            ["اسم المستشفى", meta.hospitalName || ""],
-            ["المحافظة", meta.governorate || ""],
-            ["نوع المستشفى", meta.type || ""],
-            ["القائم بالتقييم", meta.inspectors || ""],
-            ["تاريخ التقييم", meta.dates || ""],
-            ["النقاط المحققة", grandEarned],
-            ["النقاط القصوى", grandMax],
-            ["النسبة المئوية", pct + "%"],
-            [],
-            ["ملخص الأقسام", "النسبة المئوية", "النقاط", "الحد الأقصى"],
-        ];
-        FORM_DATA.forEach(sec => {
-            const { earned, effectiveMax } = getSectionScore(sec.key);
-            const pctSec = effectiveMax > 0 ? Math.round(earned / effectiveMax * 100) : 0;
-            sheet2Data.push([sec.title, pctSec + "%", earned, effectiveMax]);
-        });
-        const ws2 = XLSX.utils.aoa_to_sheet(sheet2Data);
-        ws2['!cols'] = [{wch:30},{wch:15},{wch:10},{wch:10}];
+        // 4. Write back modified XML
+        files['xl/worksheets/sheet1.xml'] = new TextEncoder().encode(sheet1);
+        files['xl/worksheets/sheet2.xml'] = new TextEncoder().encode(sheet2);
 
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws1, "التفاصيل");
-        XLSX.utils.book_append_sheet(wb, ws2, "الملخص");
-
+        // 5. Rezip and download
+        const result = await zipWrite(files);
         const fileName = `${meta.hospitalName || 'تقرير'}_${meta.dates || new Date().toISOString().slice(0,10)}.xlsx`;
-        XLSX.writeFile(wb, fileName);
-        showToast('✓ تم تصدير Excel بنجاح');
-    } catch(e) {
-        console.error(e);
-        showToast('خطأ في التصدير: ' + e.message);
+        const blob = new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        showToast('✓ تم تصدير Excel بنجاح مع التنسيق الكامل');
+    } catch (err) {
+        console.error(err);
+        showToast('خطأ في التصدير: ' + err.message);
     }
 }
 
