@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+	<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
 <script>
     // ── Service Worker: register only, NO auto-update ──────────────────
     window._swReg = null;
@@ -7314,11 +7315,11 @@ function forceRecalculation(workbookXml) {
     }
     return workbookXml;
 }
-        async function exportExcel() {
+       async function exportExcel() {
     showToast('جاري تجهيز ملف Excel...');
     await new Promise(r => setTimeout(r, 30));
     try {
-        // Sheet 1: detailed items with scores and notes
+        // Sheet 1: detailed items
         const sheet1Data = [["القسم", "السؤال الفرعي", "العنصر", "التقييم (0/1/2/N/A)", "ملاحظات"]];
         FORM_DATA.forEach(sec => {
             let idx = 0;
@@ -7339,7 +7340,7 @@ function forceRecalculation(workbookXml) {
         const ws1 = XLSX.utils.aoa_to_sheet(sheet1Data);
         ws1['!cols'] = [{wch:20},{wch:25},{wch:60},{wch:12},{wch:40}];
 
-        // Sheet 2: summary and metadata
+        // Sheet 2: summary
         let grandEarned = 0, grandMax = 0;
         FORM_DATA.forEach(sec => {
             const { earned, effectiveMax } = getSectionScore(sec.key);
