@@ -1,4 +1,4 @@
-const CACHE_NAME = 'hospital-form-dynamic-v53';
+const CACHE_NAME = 'hospital-form-dynamic-v54';
 const BASE = '/hospital-form/';  // Match your GitHub Pages repo name
 
 // Files that MUST be available offline immediately
@@ -6,6 +6,8 @@ const PRE_CACHE_ASSETS = [
     BASE + 'index.html',
     BASE + 'manifest.json',
     BASE + 'icon.png',
+     BASE + 'template.docx',
+    BASE + 'template.xlsx'
    
 ];
 
