@@ -6842,44 +6842,57 @@ function setNote(ik, val) {
         // TEMPLATE LOADER (from SW cache or network)
         // ═══════════════════════════════════════
         async function loadTemplateFromCache(filename) {
-            // Ask the active SW for its CACHE_NAME and BASE path, then fetch from cache
-            let cacheName = null, base = '/hospital-form/';
+            // Step 1: Get SW base path via MessageChannel (2s timeout)
+            let base = '/hospital-form/';
+            let swCacheName = null;
             if (navigator.serviceWorker && navigator.serviceWorker.controller) {
                 try {
-                    const result = await new Promise((resolve) => {
+                    const swData = await new Promise((resolve) => {
                         const mc = new MessageChannel();
-                        const timer = setTimeout(() => resolve(null), 3000);
-                        mc.port1.onmessage = (e) => { clearTimeout(timer); resolve(e.data); };
+                        const timer = setTimeout(() => resolve(null), 2000);
+                        mc.port1.onmessage = (e) => { clearTimeout(timer); resolve(e.data || null); };
                         navigator.serviceWorker.controller.postMessage({ type: 'GET_CACHE_NAME' }, [mc.port2]);
                     });
-                    if (result) { cacheName = result.cacheName; if (result.base) base = result.base; }
-                } catch(e) { /* ignore */ }
+                    if (swData && swData.base) base = swData.base;
+                    if (swData && swData.cacheName) swCacheName = swData.cacheName;
+                } catch (e) { /* SW unavailable */ }
             }
 
-            // Try reading directly from the SW cache
-            if (cacheName && typeof caches !== 'undefined') {
+            // Step 2: Try SW cache directly (works fully offline)
+            if (swCacheName && typeof caches !== 'undefined') {
                 try {
-                    const cache = await caches.open(cacheName);
-                    // Try both with and without origin
-                    const urls = [
+                    const cache = await caches.open(swCacheName);
+                    const candidates = [
                         location.origin + base + filename,
-                        base + filename
+                        base + filename,
+                        './' + filename,
+                        filename
                     ];
-                    for (const url of urls) {
+                    for (const url of candidates) {
                         const resp = await cache.match(url);
-                        if (resp && resp.ok) {
+                        if (resp) {
                             const buf = await resp.arrayBuffer();
-                            return new Uint8Array(buf);
+                            if (buf.byteLength > 100) return new Uint8Array(buf);
                         }
                     }
-                } catch(e) { /* fall through to network */ }
+                } catch (e) { /* fall through to network */ }
             }
 
-            // Fallback: fetch from network (also caches via SW fetch handler)
-            const resp = await fetch(base + filename);
-            if (!resp.ok) throw new Error('فشل تحميل القالب: ' + filename);
-            const buf = await resp.arrayBuffer();
-            return new Uint8Array(buf);
+            // Step 3: Network fetch — try force-cache first, then normal
+            const fetchCandidates = [base + filename, './' + filename, filename];
+            for (const cacheMode of ['force-cache', 'default']) {
+                for (const url of fetchCandidates) {
+                    try {
+                        const resp = await fetch(url, { cache: cacheMode });
+                        if (resp.ok) {
+                            const buf = await resp.arrayBuffer();
+                            if (buf.byteLength > 100) return new Uint8Array(buf);
+                        }
+                    } catch (e) { /* try next */ }
+                }
+            }
+
+            throw new Error('تعذر تحميل القالب: ' + filename + '. تأكد من الاتصال بالإنترنت أو تحديث التطبيق.');
         }
 
         async function loadTemplateHybrid() {
@@ -7411,8 +7424,8 @@ function forceRecalculation(workbookXml) {
         setTimeout(() => URL.revokeObjectURL(url), 10000);
         showToast('✓ تم تصدير الملف بنجاح مع كامل التنسيق');
     } catch (e) {
-        console.error(e);
-        showToast('خطأ في التصدير: ' + e.message);
+        console.error('exportExcel error:', e);
+        showToastLong('❌ ' + (e.message || 'خطأ غير معروف في التصدير'));
     }
 }
         // ═══════════════════════════════════════
@@ -7481,6 +7494,11 @@ function forceRecalculation(workbookXml) {
             const t = document.getElementById('toast');
             t.textContent = msg; t.classList.add('show');
             clearTimeout(_toastTimer); _toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+        }
+        function showToastLong(msg) {
+            const t = document.getElementById('toast');
+            t.textContent = msg; t.classList.add('show');
+            clearTimeout(_toastTimer); _toastTimer = setTimeout(() => t.classList.remove('show'), 7000);
         }
 
 
@@ -7729,8 +7747,8 @@ function forceRecalculation(workbookXml) {
                 setTimeout(() => URL.revokeObjectURL(url2), 10000);
                 showToast('✓ تم تصدير تقرير Word بنجاح');
             } catch(e) {
-                console.error(e);
-                showToast('خطأ في تصدير Word: ' + e.message);
+                console.error('doExportWord error:', e);
+                showToastLong('❌ ' + (e.message || 'خطأ غير معروف في تصدير Word'));
             }
         }
 
