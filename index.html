@@ -7420,12 +7420,9 @@ function forceRecalculation(workbookXml) {
 }
 	async function exportExcel() {
     showToast('جاري تجهيز الملف...');
-    await new Promise(r => setTimeout(r, 50)); // yield to UI thread
+    await new Promise(r => setTimeout(r, 50));
     try {
-        // Load template: external file for iOS ≤15, base64 for modern devices
         const templateBuf = await loadTemplateHybrid();
-
-        // Unzip template
         const files = await zipRead(templateBuf);
         let sheet = new TextDecoder().decode(files['xl/worksheets/sheet1.xml']);
         let ss = new TextDecoder().decode(files['xl/sharedStrings.xml']);
@@ -7433,19 +7430,16 @@ function forceRecalculation(workbookXml) {
         showToast('جاري كتابة البيانات...');
         await new Promise(r => setTimeout(r, 30));
 
-        // Force recalculation
         let workbook = new TextDecoder().decode(files['xl/workbook.xml']);
         workbook = forceRecalculation(workbook);
         files['xl/workbook.xml'] = new TextEncoder().encode(workbook);
 
-        // Metadata on sheet2
         let sheet2 = new TextDecoder().decode(files['xl/worksheets/sheet2.xml']);
         sheet2 = patchCell(sheet2, 'F1', meta.dates || '');
         sheet2 = patchCell(sheet2, 'D2', meta.hospitalName || '');
         sheet2 = patchCell(sheet2, 'F2', meta.inspectors || '');
         sheet2 = patchCell(sheet2, 'D3', meta.type || '');
 
-        // Scores and notes on sheet1
         FORM_DATA.forEach(sec => {
             let idx = 0;
             sec.subsections.forEach(sub => {
@@ -7469,19 +7463,23 @@ function forceRecalculation(workbookXml) {
 
         showToast('جاري ضغط الملف...');
         await new Promise(r => setTimeout(r, 30));
+        
+        console.log('Starting zipWrite...'); // للتتبع
         const result = await zipWrite(files);
+        console.log('zipWrite completed, size:', result.length);
 
         const fname = `${meta.hospitalName || 'مستشفى'}_${meta.dates || new Date().toISOString().slice(0, 10)}.xlsx`;
         const blob = new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url; a.download = fname;
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(url), 10000);
-        showToast('✓ تم تصدير الملف بنجاح مع كامل التنسيق');
+        showToast('✓ تم تصدير الملف بنجاح');
     } catch (e) {
         console.error('exportExcel error:', e);
-        showToastLong('❌ ' + (e.message || 'خطأ غير معروف في التصدير'));
+        showToast('❌ خطأ في التصدير: ' + (e.message || 'غير معروف'));
     }
 }
         // ═══════════════════════════════════════
