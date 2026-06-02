@@ -6843,13 +6843,20 @@ function setNote(ik, val) {
         // BASE64 TEMPLATE LOADER
         // ═══════════════════════════════════════
         async function loadTemplateHybrid() {
-            showToast('⚡ جاري تحضير القالب...');
-            await new Promise(r => setTimeout(r, 20));
-            const binary = atob(TEMPLATE_B64);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-            return bytes;
-        }
+    if (shouldUseExternalTemplate()) {
+        showToast('⚙️ وضع الأجهزة القديمة مفعّل');
+        await new Promise(r => setTimeout(r, 40));
+        const response = await fetch('./template.xlsx');
+        if (!response.ok) throw new Error('تعذّر تحميل القالب: ' + response.status);
+        return new Uint8Array(await response.arrayBuffer());
+    }
+    showToast('⚡ وضع الأداء السريع');
+    await new Promise(r => setTimeout(r, 40));
+    const binary = atob(TEMPLATE_B64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+}
 
         async function zipWrite(files) {
             const lhs = [], cds = [];
@@ -7305,9 +7312,23 @@ function setNote(ik, val) {
         function closeMergeModal() {
             document.getElementById('mergeModalBg').style.display = 'none';
         }
+function getIOSVersion() {
+    const ua = navigator.userAgent;
+    if (/iP(hone|od|ad)/.test(ua)) {
+        const match = ua.match(/OS (\d+)_/);
+        if (match) return parseInt(match[1], 10);
+    }
+    return null; // not iOS
+}
 
+function shouldUseExternalTemplate() {
+    const iosVersion = getIOSVersion();
+    // Old iOS (<=15) -> external template (avoids base64 memory spike)
+    if (iosVersion !== null && iosVersion <= 15) return true;
+    // iOS 16+, Android, Desktop -> base64 (fast, no network needed)
+    return false;
+}
 function forceRecalculation(workbookXml) {
-    // Add fullCalcOnLoad attribute to force recalculation when opening
     if (workbookXml.includes('<calcPr')) {
         workbookXml = workbookXml.replace(/<calcPr[^>]*\/>/, '<calcPr calcId="1" fullCalcOnLoad="1"/>');
     } else {
@@ -7315,43 +7336,34 @@ function forceRecalculation(workbookXml) {
     }
     return workbookXml;
 }
-function forceRecalculation(workbookXml) {
-    // Add fullCalcOnLoad attribute to force recalculation when opening
-    if (workbookXml.includes('<calcPr')) {
-        workbookXml = workbookXml.replace(/<calcPr[^>]*\/>/, '<calcPr calcId="1" fullCalcOnLoad="1"/>');
-    } else {
-        workbookXml = workbookXml.replace(/(<\/workbook>)/, '<calcPr calcId="1" fullCalcOnLoad="1"/>$1');
-    }
-    return workbookXml;
-}
-		async function exportExcel() {
+	async function exportExcel() {
     showToast('جاري تجهيز الملف...');
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 50)); // yield to UI thread
     try {
-        // Load template from base64 (always, no external fallback needed)
-        const templateBuf = (() => {
-            const binary = atob(TEMPLATE_B64);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-            return bytes;
-        })();
+        // Load template: external file for iOS ≤15, base64 for modern devices
+        const templateBuf = await loadTemplateHybrid();
 
+        // Unzip template
         const files = await zipRead(templateBuf);
         let sheet = new TextDecoder().decode(files['xl/worksheets/sheet1.xml']);
-        let sheet2 = new TextDecoder().decode(files['xl/worksheets/sheet2.xml']);
+        let ss = new TextDecoder().decode(files['xl/sharedStrings.xml']);
 
-        // Force Excel to recalculate all formulas on open
+        showToast('جاري كتابة البيانات...');
+        await new Promise(r => setTimeout(r, 30));
+
+        // Force recalculation
         let workbook = new TextDecoder().decode(files['xl/workbook.xml']);
         workbook = forceRecalculation(workbook);
         files['xl/workbook.xml'] = new TextEncoder().encode(workbook);
 
-        // Write metadata (sheet2)
+        // Metadata on sheet2
+        let sheet2 = new TextDecoder().decode(files['xl/worksheets/sheet2.xml']);
         sheet2 = patchCell(sheet2, 'F1', meta.dates || '');
         sheet2 = patchCell(sheet2, 'D2', meta.hospitalName || '');
         sheet2 = patchCell(sheet2, 'F2', meta.inspectors || '');
         sheet2 = patchCell(sheet2, 'D3', meta.type || '');
 
-        // Write scores and notes (sheet1)
+        // Scores and notes on sheet1
         FORM_DATA.forEach(sec => {
             let idx = 0;
             sec.subsections.forEach(sub => {
