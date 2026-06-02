@@ -14,6 +14,62 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 	<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
 <script>
+	// Template preloading
+    let _cachedExcelTemplate = null;
+    let _cachedWordTemplate = null;
+
+    async function _fetchWithTimeout(url, ms = 15000) {
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), ms);
+        try {
+            const r = await fetch(url, { signal: ctrl.signal });
+            clearTimeout(tid);
+            if (!r.ok) throw new Error('HTTP ' + r.status + ' — ' + url);
+            return new Uint8Array(await r.arrayBuffer());
+        } catch(e) { clearTimeout(tid); throw e; }
+    }
+
+    async function preloadTemplates() {
+        const results = await Promise.allSettled([
+            _fetchWithTimeout('./template.xlsx'),
+            _fetchWithTimeout('./template.docx')
+        ]);
+        if (results[0].status === 'fulfilled') {
+            _cachedExcelTemplate = results[0].value;
+            console.log('[Templates] ✓ template.xlsx ready (' + _cachedExcelTemplate.length + ' bytes)');
+        }
+        if (results[1].status === 'fulfilled') {
+            _cachedWordTemplate = results[1].value;
+            console.log('[Templates] ✓ template.docx ready (' + _cachedWordTemplate.length + ' bytes)');
+        }
+    }
+
+    async function loadExcelTemplate() {
+        if (_cachedExcelTemplate) return _cachedExcelTemplate;
+        showToast('جاري تحميل قالب Excel...');
+        try {
+            _cachedExcelTemplate = await _fetchWithTimeout('./template.xlsx');
+            return _cachedExcelTemplate;
+        } catch(e) {
+            showToast('خطأ في تحميل قالب Excel: ' + e.message);
+            throw e;
+        }
+    }
+
+    async function loadWordTemplate() {
+        if (_cachedWordTemplate) return _cachedWordTemplate;
+        showToast('جاري تحميل قالب Word...');
+        try {
+            _cachedWordTemplate = await _fetchWithTimeout('./template.docx');
+            return _cachedWordTemplate;
+        } catch(e) {
+            showToast('خطأ في تحميل قالب Word: ' + e.message);
+            throw e;
+        }
+    }
+
+    // Preload on page load
+    window.addEventListener('load', preloadTemplates);
     // ── Service Worker: register only, NO auto-update ──────────────────
     window._swReg = null;
     if ('serviceWorker' in navigator) {
