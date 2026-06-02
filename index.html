@@ -6850,63 +6850,56 @@ function setNote(ik, val) {
 }
 
         async function zipWrite(files) {
-            const lhs = [], cds = [];
-            let offset = 0;
-            for (const [name, rawData] of Object.entries(files)) {
-                const nb = new TextEncoder().encode(name);
-                let comp = rawData, cm = 0;
-                // Try compression if available, but don't hang if it fails
-               if (_canCompress) {
-    try {
-        const cs = new CompressionStream('deflate-raw');
-        const writer = cs.writable.getWriter();
-        const reader = cs.readable.getReader();
-        const chunks = [];
-        const pump = () => reader.read().then(({ done, value }) => {
-            if (done) return;
-            chunks.push(value);
-            return pump();
-        });
-        await writer.write(rawData);
-        await writer.close();
-        await pump();
-        const c = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
-        let p = 0;
-        for (const ch of chunks) {
-            c.set(ch, p);
-            p += ch.length;
+    const lhs = [], cds = [];
+    let offset = 0;
+    for (const [name, rawData] of Object.entries(files)) {
+        const nb = new TextEncoder().encode(name);
+        let comp = rawData, cm = 0;
+        if (_canCompress) {
+            try {
+                const cs = new CompressionStream('deflate-raw');
+                const writer = cs.writable.getWriter();
+                const reader = cs.readable.getReader();
+                const chunks = [];
+                const pump = () => reader.read().then(({ done, value }) => {
+                    if (done) return;
+                    chunks.push(value);
+                    return pump();
+                });
+                await writer.write(rawData);
+                await writer.close();
+                await pump();
+                const c = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
+                let p = 0;
+                for (const ch of chunks) {
+                    c.set(ch, p);
+                    p += ch.length;
+                }
+                if (c.length < rawData.length) {
+                    comp = c;
+                    cm = 8;
+                }
+            } catch(e) {
+                comp = rawData;
+                cm = 0;
+            }
         }
-        if (c.length < rawData.length) {
-            comp = c;
-            cm = 8;
-        }
-    } catch(e) {
-        comp = rawData;
-        cm = 0;
+        const crc = crc32(rawData);
+        const lh = new Uint8Array([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, ...nb, ...comp]);
+        const cd = new Uint8Array([0x50, 0x4B, 0x01, 0x02, 0x1E, 0x03, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, ...u32le(offset), ...nb]);
+        lhs.push(lh);
+        cds.push(cd);
+        offset += lh.length;
     }
+    const cdOff = offset, cdSz = cds.reduce((a, b) => a + b.length, 0);
+    const eocd = new Uint8Array([0x50, 0x4B, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, ...u16le(cds.length), ...u16le(cds.length), ...u32le(cdSz), ...u32le(cdOff), 0x00, 0x00]);
+    const total = cdOff + cdSz + eocd.length, out = new Uint8Array(total);
+    let pos = 0;
+    for (const lh of lhs) { out.set(lh, pos); pos += lh.length; }
+    for (const cd of cds) { out.set(cd, pos); pos += cd.length; }
+    out.set(eocd, pos);
+    return out;
 }
-                const crc = crc32(rawData);
-                const lh = new Uint8Array([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, ...nb, ...comp]);
-                const cd = new Uint8Array([0x50, 0x4B, 0x01, 0x02, 0x1E, 0x03, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, ...u32le(offset), ...nb]);
-                lhs.push(lh);
-                cds.push(cd);
-                offset += lh.length;
-            }
-            const cdOff = offset, cdSz = cds.reduce((a, b) => a + b.length, 0);
-            const eocd = new Uint8Array([0x50, 0x4B, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, ...u16le(cds.length), ...u16le(cds.length), ...u32le(cdSz), ...u32le(cdOff), 0x00, 0x00]);
-            const total = cdOff + cdSz + eocd.length, out = new Uint8Array(total);
-            let pos = 0;
-            for (const lh of lhs) {
-                out.set(lh, pos);
-                pos += lh.length;
-            }
-            for (const cd of cds) {
-                out.set(cd, pos);
-                pos += cd.length;
-            }
-            out.set(eocd, pos);
-            return out;
-        }
 
         // Patch a single cell: preserve s= style attribute, update value
         function patchCell(sheet, cellRef, value) {
