@@ -6768,7 +6768,7 @@ function setNote(ik, val) {
         function u32le(v) { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v, true); return b; }
 
         async function decompDeflate(data) {
-            if (typeof DecompressionStream !== 'undefined' && _iosVer >= 16) {
+            if (typeof DecompressionStream !== 'undefined') {
                 try {
                     const ds = new DecompressionStream('deflate-raw');
                     const writer = ds.writable.getWriter();
