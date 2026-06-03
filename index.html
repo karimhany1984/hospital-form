@@ -7447,69 +7447,277 @@ function forceRecalculation(workbookXml) {
     return workbookXml;
 }
 	async function exportExcel() {
-    showToast('جاري تجهيز الملف...');
-    await new Promise(r => setTimeout(r, 50));
-    try {
-        const templateBuf = await loadTemplateHybrid();
-        const files = await zipRead(templateBuf);
-        let sheet = new TextDecoder().decode(files['xl/worksheets/sheet1.xml']);
-        let ss = new TextDecoder().decode(files['xl/sharedStrings.xml']);
+            if (_exportingExcel) { showToast('جاري التصدير بالفعل، يرجى الانتظار...'); return; }
+            _exportingExcel = true;
+            showToast('جاري تجهيز الملف...');
 
-        showToast('جاري كتابة البيانات...');
-        await new Promise(r => setTimeout(r, 30));
+            try {
+                const templateBuf = await loadExcelTemplate();
 
-        let workbook = new TextDecoder().decode(files['xl/workbook.xml']);
-        workbook = forceRecalculation(workbook);
-        files['xl/workbook.xml'] = new TextEncoder().encode(workbook);
+                // Spin up a fresh worker from serialized functions (no escaping issues)
+                const workerUrl  = URL.createObjectURL(_buildWorkerBlob());
+                const worker     = new Worker(workerUrl);
+                URL.revokeObjectURL(workerUrl);
 
-        let sheet2 = new TextDecoder().decode(files['xl/worksheets/sheet2.xml']);
-        sheet2 = patchCell(sheet2, 'F1', meta.dates || '');
-        sheet2 = patchCell(sheet2, 'D2', meta.hospitalName || '');
-        sheet2 = patchCell(sheet2, 'F2', meta.inspectors || '');
-        sheet2 = patchCell(sheet2, 'D3', meta.type || '');
+                // Send a COPY of the template buffer (transferable) + plain data
+                const templateCopy = templateBuf.slice().buffer;
 
-        FORM_DATA.forEach(sec => {
-            let idx = 0;
-            sec.subsections.forEach(sub => {
-                sub.items.forEach(() => {
-                    const mapKey = `${sec.key}__${idx}`;
-                    const rowNum = ROW_MAP[mapKey];
-                    if (rowNum) {
-                        const sc = scores[mapKey];
-                        if (sc === 'N/A') sheet = patchCell(sheet, `C${rowNum}`, 'N/A');
-                        else if (sc !== undefined && sc !== null) sheet = patchCell(sheet, `C${rowNum}`, sc);
-                        else sheet = patchCell(sheet, `C${rowNum}`, '');
-                        sheet = patchCell(sheet, `D${rowNum}`, notes[mapKey] || '');
-                    }
-                    idx++;
+                await new Promise((resolve, reject) => {
+                    worker.onmessage = (e) => {
+                        const { status, msg, result } = e.data;
+                        if (status === 'progress') {
+                            showToast(msg);
+                        } else if (status === 'done') {
+                            worker.terminate();
+                            const blob = new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                            const url2 = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            const fname = (meta.region ? meta.region + '_' : '') + (meta.hospitalName || 'وحدة') + '_' + (meta.dates || new Date().toISOString().slice(0, 10)) + '.xlsx';
+                            a.href = url2; a.download = fname;
+                            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                            setTimeout(() => URL.revokeObjectURL(url2), 10000);
+                            showToast('✓ تم تصدير الملف بنجاح');
+                            resolve();
+                        } else if (status === 'error') {
+                            worker.terminate();
+                            reject(new Error(msg));
+                        }
+                    };
+                    worker.onerror = (e) => { worker.terminate(); reject(new Error(e.message)); };
+
+                    worker.postMessage({
+                        templateBuf: templateCopy,
+                        scores:  JSON.parse(JSON.stringify(scores)),
+                        notes:   JSON.parse(JSON.stringify(notes)),
+                        ROW_MAP: ROW_MAP,
+                        meta:    { dates: meta.dates, hospitalName: meta.hospitalName, inspectors: meta.inspectors }
+                    }, [templateCopy]);
                 });
-            });
-        });
 
-        files['xl/worksheets/sheet1.xml'] = new TextEncoder().encode(sheet);
-        files['xl/worksheets/sheet2.xml'] = new TextEncoder().encode(sheet2);
+            } catch (e) {
+                console.error(e);
+                showToast('خطأ في التصدير: ' + e.message);
+            } finally {
+                _exportingExcel = false;
+            }
+        }
 
-        showToast('جاري ضغط الملف...');
-        await new Promise(r => setTimeout(r, 30));
-        
-        console.log('Starting zipWrite...'); // للتتبع
-        const result = await zipWrite(files);
-        console.log('zipWrite completed, size:', result.length);
+		    // ═══════════════════════════════════════
+        // WORD EXPORT FUNCTIONS
+        // ═══════════════════════════════════════
 
-        const fname = `${meta.hospitalName || 'مستشفى'}_${meta.dates || new Date().toISOString().slice(0, 10)}.xlsx`;
-        const blob = new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = fname;
-        document.body.appendChild(a); a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url), 10000);
-        showToast('✓ تم تصدير الملف بنجاح');
-    } catch (e) {
-        console.error('exportExcel error:', e);
-        showToast('❌ خطأ في التصدير: ' + (e.message || 'غير معروف'));
-    }
-}
+        function xmlEsc(s) {
+            return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+        }
+
+        function arabicDay(date) {
+            const days = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+            return days[date.getDay()];
+        }
+
+        function formatArabicDate(dateStr) {
+            if (!dateStr) return '';
+            let d = null;
+            const dmyMatch = dateStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+            if (dmyMatch) {
+                d = new Date(parseInt(dmyMatch[3]), parseInt(dmyMatch[2]) - 1, parseInt(dmyMatch[1]));
+            } else {
+                const isoMatch = dateStr.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+                if (isoMatch) {
+                    d = new Date(parseInt(isoMatch[1]), parseInt(isoMatch[2]) - 1, parseInt(isoMatch[3]));
+                }
+            }
+            if (!d || isNaN(d)) {
+                return dateStr;
+            }
+            const day = arabicDay(d);
+            const dd = d.getDate();
+            const mm = d.getMonth() + 1;
+            const yyyy = d.getFullYear();
+            return day + ' الموافق ' + dd + '/' + mm + '/' + yyyy;
+        }
+
+        function buildWordTableRow(sectionTitle, negativesNotes, scorePct) {
+            let negParas = '';
+            const textEntries = negativesNotes.filter(note => note !== null);
+            if (textEntries.length === 0) {
+                negParas = `<w:p><w:pPr><w:bidi/></w:pPr></w:p>`;
+            } else {
+                negParas = textEntries.map(note => {
+                    const clean = note.replace(/\r\n/g, ' ').replace(/\n/g, ' ').trim();
+                    return `<w:p>
+                  <w:pPr>
+                    <w:bidi/>
+                    <w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>
+                    <w:rPr><w:rFonts w:asciiTheme="majorBidi" w:hAnsiTheme="majorBidi" w:cstheme="majorBidi"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:rtl/><w:lang w:bidi="ar-EG"/></w:rPr>
+                  </w:pPr>
+                  <w:r>
+                    <w:rPr><w:rFonts w:asciiTheme="majorBidi" w:hAnsiTheme="majorBidi" w:cstheme="majorBidi"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:rtl/><w:lang w:bidi="ar-EG"/></w:rPr>
+                    <w:t xml:space="preserve">${xmlEsc(clean)}</w:t>
+                  </w:r>
+                </w:p>`;
+                }).join('\n');
+            }
+
+            return `<w:tr>
+          <w:tc>
+            <w:tcPr><w:tcW w:w="1626" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>
+            <w:p>
+              <w:pPr><w:bidi/><w:jc w:val="center"/><w:rPr><w:rFonts w:asciiTheme="majorBidi" w:hAnsiTheme="majorBidi" w:cstheme="majorBidi"/><w:b/><w:bCs/><w:sz w:val="22"/><w:szCs w:val="22"/><w:rtl/><w:lang w:bidi="ar-EG"/></w:rPr></w:pPr>
+              <w:r><w:rPr><w:rFonts w:asciiTheme="majorBidi" w:hAnsiTheme="majorBidi" w:cstheme="majorBidi"/><w:b/><w:bCs/><w:sz w:val="22"/><w:szCs w:val="22"/><w:rtl/><w:lang w:bidi="ar-EG"/></w:rPr><w:t>${xmlEsc(sectionTitle)}</w:t></w:r>
+            </w:p>
+          </w:tc>
+          <w:tc>
+            <w:tcPr><w:tcW w:w="6475" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>
+            ${negParas}
+          </w:tc>
+          <w:tc>
+            <w:tcPr><w:tcW w:w="916" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>
+            <w:p>
+              <w:pPr><w:bidi/><w:jc w:val="center"/><w:rPr><w:rFonts w:asciiTheme="majorBidi" w:hAnsiTheme="majorBidi" w:cstheme="majorBidi"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:rtl/><w:lang w:bidi="ar-EG"/></w:rPr></w:pPr>
+              <w:r><w:rPr><w:rFonts w:asciiTheme="majorBidi" w:hAnsiTheme="majorBidi" w:cstheme="majorBidi"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:rtl/><w:lang w:bidi="ar-EG"/></w:rPr><w:t>${xmlEsc(scorePct)}</w:t></w:r>
+            </w:p>
+          </w:tc>
+        </w:tr>`;
+        }
+
+        function showWordSectionPicker() {
+            const eligible = FORM_DATA.map(sec => {
+                let hasNotes = false, hasNeg = false;
+                let idx = 0;
+                sec.subsections.forEach(sub => {
+                    sub.items.forEach(item => {
+                        const ik = `${sec.key}__${idx}`;
+                        const sc = scores[ik];
+                        const note = notes[ik];
+                        if (sc === 0 || sc === 1) { hasNeg = true; if (note && note.trim()) hasNotes = true; }
+                        if (sc === 2 && note && note.trim()) hasNotes = true;
+                        idx++;
+                    });
+                });
+                return { key: sec.key, title: sec.title, eligible: hasNeg || hasNotes };
+            }).filter(s => s.eligible);
+
+            if (eligible.length === 0) {
+                showToast('لا توجد أقسام تحتوي على ملاحظات للتصدير');
+                return;
+            }
+
+            const old = document.getElementById('wordPickerModal');
+            if (old) old.remove();
+
+            const checkboxes = eligible.map(s =>
+                `<label class="wpck-item">
+                  <input type="checkbox" class="wpck-cb" data-key="${s.key}" checked>
+                  <span>${s.title}</span>
+                </label>`
+            ).join('');
+
+            const modal = document.createElement('div');
+            modal.id = 'wordPickerModal';
+            modal.innerHTML = `
+              <div class="wpck-overlay" onclick="document.getElementById('wordPickerModal').remove()"></div>
+              <div class="wpck-box" dir="rtl">
+                <h3 class="wpck-title">اختر الأقسام المراد تضمينها في التقرير</h3>
+                <div class="wpck-actions-top">
+                  <button class="wpck-btn-sm" onclick="wpckToggleAll(true)">تحديد الكل</button>
+                  <button class="wpck-btn-sm" onclick="wpckToggleAll(false)">إلغاء تحديد الكل</button>
+                </div>
+                <div class="wpck-list">${checkboxes}</div>
+                <div class="wpck-footer">
+                  <button class="wpck-btn-cancel" onclick="document.getElementById('wordPickerModal').remove()">إلغاء</button>
+                  <button class="wpck-btn-export" onclick="doExportWord()">📄 تصدير</button>
+                </div>
+              </div>`;
+            document.body.appendChild(modal);
+        }
+
+        function wpckToggleAll(state) {
+            document.querySelectorAll('.wpck-cb').forEach(cb => cb.checked = state);
+        }
+
+        async function doExportWord() {
+            const selectedKeys = new Set(
+                [...document.querySelectorAll('.wpck-cb:checked')].map(cb => cb.dataset.key)
+            );
+            if (selectedKeys.size === 0) { showToast('يرجى تحديد قسم واحد على الأقل'); return; }
+            document.getElementById('wordPickerModal').remove();
+
+            showToast('جاري إنشاء تقرير Word...');
+            await new Promise(r => setTimeout(r, 50));
+            try {
+                const templateBuf = await loadWordTemplate();
+                const files = await zipRead(templateBuf);
+                let docXml = new TextDecoder('utf-8').decode(files['word/document.xml']);
+
+                docXml = docXml.replace(
+                    /<w:t[^>]*>ال<\/w:t>(\s*<\/w:r>\s*<\/w:tc>|[\s\S]*?)<w:t[^>]*>سلبيات<\/w:t>/,
+                    (m) => m.replace(/ال<\/w:t>/, 'الملاحظات</w:t>').replace(/<w:t[^>]*>سلبيات<\/w:t>/, '<w:t></w:t>')
+                );
+                docXml = docXml.replace(/<w:t[^>]*>السلبيات<\/w:t>/g, '<w:t>الملاحظات</w:t>');
+
+                const hospitalName = meta.hospitalName || meta.hospital || '';
+                docXml = docXml.replace(/&lt;&lt;hospital name&gt;&gt;/gi, xmlEsc(hospitalName));
+                docXml = docXml.replace(/<<hospital name>>/gi, xmlEsc(hospitalName));
+
+                const rawDate = meta.dates || '';
+                const arabicDate = formatArabicDate(rawDate);
+                docXml = docXml.replace(/&lt;&lt;Date&gt;&gt;/gi, xmlEsc(arabicDate));
+                docXml = docXml.replace(/<<Date>>/gi, xmlEsc(arabicDate));
+
+                const tableRows = FORM_DATA
+                    .filter(sec => selectedKeys.has(sec.key))
+                    .map(sec => {
+                        const { earned, effectiveMax } = getSectionScore(sec.key);
+                        const pct = effectiveMax > 0 ? Math.round(earned / effectiveMax * 100) + '%' : '0%';
+
+                      
+                        
+        const notesList = [];
+let idx = 0;
+sec.subsections.forEach(sub => {
+    sub.items.forEach(item => {
+        const ik = `${sec.key}__${idx}`;
+        const sc = scores[ik];
+        const note = notes[ik];
+        if (note && note.trim()) {
+            notesList.push(note.trim());
+        }
+        idx++;
+    });
+});
+
+                        return buildWordTableRow(sec.title, notesList, pct);
+                    }).join('\n');
+
+                const trMatches = [...docXml.matchAll(/<w:tr[ >][\s\S]*?<\/w:tr>/g)];
+                if (trMatches.length >= 2) {
+                    const secondTr = trMatches[1];
+                    docXml = docXml.slice(0, secondTr.index) + tableRows + docXml.slice(secondTr.index + secondTr[0].length);
+                }
+
+                files['word/document.xml'] = new TextEncoder().encode(docXml);
+
+                showToast('جاري حفظ الملف...');
+                await new Promise(r => setTimeout(r, 30));
+                const result = await zipWrite(files);
+
+                const fname = `تقرير_${hospitalName || 'الوحدة'}_${rawDate || new Date().toLocaleDateString('ar-EG')}.docx`;
+                const blob = new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+                const url2 = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url2; a.download = fname;
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url2), 10000);
+                showToast('✓ تم تصدير تقرير Word بنجاح');
+            } catch(e) {
+                console.error(e);
+                showToast('خطأ في تصدير Word: ' + e.message);
+            }
+        }
+
+        function exportWord() { showWordSectionPicker(); }
+
         // ═══════════════════════════════════════
         // LOCAL STORAGE
         // ═══════════════════════════════════════
@@ -7584,258 +7792,7 @@ function forceRecalculation(workbookXml) {
         }
 
 
-        // ═══════════════════════════════════════
-        // WORD EXPORT (template-based)
-        // ═══════════════════════════════════════
-		
-        function b64ToUint8Array(b64) {
-            const bin = atob(b64);
-            const arr = new Uint8Array(bin.length);
-            for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-            return arr;
-        }
-
-        function xmlEsc(s) {
-            return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-        }
-
-        function arabicDay(date) {
-            const days = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
-            return days[date.getDay()];
-        }
-
-        function formatArabicDate(dateStr) {
-            // dateStr could be like "3/5/2026" or "2026-05-03" or a free-form Arabic string
-            // Try to parse as Date
-            if (!dateStr) return '';
-            // Try d/m/yyyy format first
-            let d = null;
-            const dmyMatch = dateStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-            if (dmyMatch) {
-                d = new Date(parseInt(dmyMatch[3]), parseInt(dmyMatch[2]) - 1, parseInt(dmyMatch[1]));
-            } else {
-                // Try yyyy-mm-dd
-                const isoMatch = dateStr.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
-                if (isoMatch) {
-                    d = new Date(parseInt(isoMatch[1]), parseInt(isoMatch[2]) - 1, parseInt(isoMatch[3]));
-                }
-            }
-            if (!d || isNaN(d)) {
-                // fallback: return original
-                return dateStr;
-            }
-            const day = arabicDay(d);
-            const dd = d.getDate();
-            const mm = d.getMonth() + 1;
-            const yyyy = d.getFullYear();
-            return day + ' الموافق ' + dd + '/' + mm + '/' + yyyy;
-        }
-
-        // Build a table row XML for the Word document
-        // negativesNotes is an array where each entry is either a string (note text) or null (empty bullet)
-        function buildWordTableRow(sectionTitle, negativesNotes, scorePct) {
-            const cellRpr = `<w:rPr>
-                <w:rFonts w:asciiTheme="majorBidi" w:hAnsiTheme="majorBidi" w:cstheme="majorBidi"/>
-                <w:sz w:val="24"/>
-                <w:szCs w:val="24"/>
-                <w:rtl/>
-                <w:lang w:bidi="ar-EG"/>
-              </w:rPr>`;
-
-            // Build bullet paragraphs for negatives column
-            let negParas = '';
-            const textEntries = negativesNotes.filter(note => note !== null);
-            if (textEntries.length === 0) {
-                // No notes at all — empty cell
-                negParas = `<w:p><w:pPr><w:bidi/></w:pPr></w:p>`;
-            } else {
-                negParas = textEntries.map(note => {
-                    const clean = note.replace(/\r\n/g, ' ').replace(/\n/g, ' ').trim();
-                    return `<w:p>
-                  <w:pPr>
-                    <w:bidi/>
-                    <w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>
-                    <w:rPr><w:rFonts w:asciiTheme="majorBidi" w:hAnsiTheme="majorBidi" w:cstheme="majorBidi"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:rtl/><w:lang w:bidi="ar-EG"/></w:rPr>
-                  </w:pPr>
-                  <w:r>
-                    <w:rPr><w:rFonts w:asciiTheme="majorBidi" w:hAnsiTheme="majorBidi" w:cstheme="majorBidi"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:rtl/><w:lang w:bidi="ar-EG"/></w:rPr>
-                    <w:t xml:space="preserve">${xmlEsc(clean)}</w:t>
-                  </w:r>
-                </w:p>`;
-                }).join('\n');
-            }
-
-            return `<w:tr>
-          <w:tc>
-            <w:tcPr><w:tcW w:w="1626" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>
-            <w:p>
-              <w:pPr><w:bidi/><w:jc w:val="center"/><w:rPr><w:rFonts w:asciiTheme="majorBidi" w:hAnsiTheme="majorBidi" w:cstheme="majorBidi"/><w:b/><w:bCs/><w:sz w:val="22"/><w:szCs w:val="22"/><w:rtl/><w:lang w:bidi="ar-EG"/></w:rPr></w:pPr>
-              <w:r><w:rPr><w:rFonts w:asciiTheme="majorBidi" w:hAnsiTheme="majorBidi" w:cstheme="majorBidi"/><w:b/><w:bCs/><w:sz w:val="22"/><w:szCs w:val="22"/><w:rtl/><w:lang w:bidi="ar-EG"/></w:rPr><w:t>${xmlEsc(sectionTitle)}</w:t></w:r>
-            </w:p>
-          </w:tc>
-          <w:tc>
-            <w:tcPr><w:tcW w:w="6475" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>
-            ${negParas}
-          </w:tc>
-          <w:tc>
-            <w:tcPr><w:tcW w:w="916" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>
-            <w:p>
-              <w:pPr><w:bidi/><w:jc w:val="center"/><w:rPr><w:rFonts w:asciiTheme="majorBidi" w:hAnsiTheme="majorBidi" w:cstheme="majorBidi"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:rtl/><w:lang w:bidi="ar-EG"/></w:rPr></w:pPr>
-              <w:r><w:rPr><w:rFonts w:asciiTheme="majorBidi" w:hAnsiTheme="majorBidi" w:cstheme="majorBidi"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:rtl/><w:lang w:bidi="ar-EG"/></w:rPr><w:t>${xmlEsc(scorePct)}</w:t></w:r>
-            </w:p>
-          </w:tc>
-        </w:tr>`;
-        }
-
-        // ── Section-picker modal ──────────────────────────────────────────
-        function showWordSectionPicker() {
-            // Build list of eligible sections (have at least one 0/1/2 answer with a note OR 0/1 without note)
-            const eligible = FORM_DATA.map(sec => {
-                let hasNotes = false, hasNeg = false;
-                let idx = 0;
-                sec.subsections.forEach(sub => {
-                    sub.items.forEach(item => {
-                        const ik = `${sec.key}__${idx}`;
-                        const sc = scores[ik];
-                        const note = notes[ik];
-                        if (sc === 0 || sc === 1) { hasNeg = true; if (note && note.trim()) hasNotes = true; }
-                        if (sc === 2 && note && note.trim()) hasNotes = true;
-                        idx++;
-                    });
-                });
-                return { key: sec.key, title: sec.title, eligible: hasNeg || hasNotes };
-            }).filter(s => s.eligible);
-
-            if (eligible.length === 0) {
-                showToast('لا توجد أقسام تحتوي على ملاحظات للتصدير');
-                return;
-            }
-
-            // Remove any existing modal
-            const old = document.getElementById('wordPickerModal');
-            if (old) old.remove();
-
-            const checkboxes = eligible.map(s =>
-                `<label class="wpck-item">
-                  <input type="checkbox" class="wpck-cb" data-key="${s.key}" checked>
-                  <span>${s.title}</span>
-                </label>`
-            ).join('');
-
-            const modal = document.createElement('div');
-            modal.id = 'wordPickerModal';
-            modal.innerHTML = `
-              <div class="wpck-overlay" onclick="document.getElementById('wordPickerModal').remove()"></div>
-              <div class="wpck-box" dir="rtl">
-                <h3 class="wpck-title">اختر الأقسام المراد تضمينها في التقرير</h3>
-                <div class="wpck-actions-top">
-                  <button class="wpck-btn-sm" onclick="wpckToggleAll(true)">تحديد الكل</button>
-                  <button class="wpck-btn-sm" onclick="wpckToggleAll(false)">إلغاء تحديد الكل</button>
-                </div>
-                <div class="wpck-list">${checkboxes}</div>
-                <div class="wpck-footer">
-                  <button class="wpck-btn-cancel" onclick="document.getElementById('wordPickerModal').remove()">إلغاء</button>
-                  <button class="wpck-btn-export" onclick="doExportWord()">📄 تصدير</button>
-                </div>
-              </div>`;
-            document.body.appendChild(modal);
-        }
-
-        function wpckToggleAll(state) {
-            document.querySelectorAll('.wpck-cb').forEach(cb => cb.checked = state);
-        }
-
-        async function doExportWord() {
-            const selectedKeys = new Set(
-                [...document.querySelectorAll('.wpck-cb:checked')].map(cb => cb.dataset.key)
-            );
-            if (selectedKeys.size === 0) { showToast('يرجى تحديد قسم واحد على الأقل'); return; }
-            document.getElementById('wordPickerModal').remove();
-
-            showToast('جاري إنشاء تقرير Word...');
-            await new Promise(r => setTimeout(r, 50));
-            try {
-                const templateBuf = await loadWordTemplateHybrid();
-                const files = await zipRead(templateBuf);
-                let docXml = new TextDecoder('utf-8').decode(files['word/document.xml']);
-
-                // Fix header: السلبيات → الملاحظات
-                // The word is split across two runs: 'ال' + 'سلبيات' — merge them into one clean run
-                docXml = docXml.replace(
-                    /<w:t[^>]*>ال<\/w:t>(\s*<\/w:r>\s*<\/w:tc>|[\s\S]*?)<w:t[^>]*>سلبيات<\/w:t>/,
-                    (m) => m.replace(/ال<\/w:t>/, 'الملاحظات</w:t>').replace(/<w:t[^>]*>سلبيات<\/w:t>/, '<w:t></w:t>')
-                );
-                // fallback single-run case
-                docXml = docXml.replace(/<w:t[^>]*>السلبيات<\/w:t>/g, '<w:t>الملاحظات</w:t>');
-
-                // Replace <<hospital name>>
-                const hospitalName = meta.hospitalName || meta.hospital || '';
-                docXml = docXml.replace(/&lt;&lt;hospital name&gt;&gt;/gi, xmlEsc(hospitalName));
-                docXml = docXml.replace(/<<hospital name>>/gi, xmlEsc(hospitalName));
-
-                // Replace <<Date>>
-                const rawDate = meta.dates || '';
-                const arabicDate = formatArabicDate(rawDate);
-                docXml = docXml.replace(/&lt;&lt;Date&gt;&gt;/gi, xmlEsc(arabicDate));
-                docXml = docXml.replace(/<<Date>>/gi, xmlEsc(arabicDate));
-
-                // Build table rows for selected sections
-                const tableRows = FORM_DATA
-                    .filter(sec => selectedKeys.has(sec.key))
-                    .map(sec => {
-                        const { earned, effectiveMax } = getSectionScore(sec.key);
-                        const pct = effectiveMax > 0 ? Math.round(earned / effectiveMax * 100) + '%' : '0%';
-
-                        const notesList = [];
-                        let idx = 0;
-                        sec.subsections.forEach(sub => {
-                            sub.items.forEach(item => {
-                                const ik = `${sec.key}__${idx}`;
-                                const sc = scores[ik];
-                                const note = notes[ik];
-                                // Include note if score 0 or 1 (any note state) OR score 2 with note
-                                if ((sc === 0 || sc === 1) && note && note.trim()) {
-                                    notesList.push(note.trim());
-                                } else if (sc === 2 && note && note.trim()) {
-                                    notesList.push(note.trim());
-                                }
-                                // sc 0/1 with no note → skip (no bullet)
-                                idx++;
-                            });
-                        });
-
-                        return buildWordTableRow(sec.title, notesList, pct);
-                    }).join('\n');
-
-                // Replace template's empty data row with generated rows
-                const trMatches = [...docXml.matchAll(/<w:tr[ >][\s\S]*?<\/w:tr>/g)];
-                if (trMatches.length >= 2) {
-                    const secondTr = trMatches[1];
-                    docXml = docXml.slice(0, secondTr.index) + tableRows + docXml.slice(secondTr.index + secondTr[0].length);
-                }
-
-                files['word/document.xml'] = new TextEncoder().encode(docXml);
-
-                showToast('جاري حفظ الملف...');
-                await new Promise(r => setTimeout(r, 30));
-                const result = await zipWrite(files);
-
-                const fname = `تقرير_${hospitalName || 'المستشفى'}_${rawDate || new Date().toLocaleDateString('ar-EG')}.docx`;
-                const blob = new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-                const url2 = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url2; a.download = fname;
-                document.body.appendChild(a); a.click(); document.body.removeChild(a);
-                setTimeout(() => URL.revokeObjectURL(url2), 10000);
-                showToast('✓ تم تصدير تقرير Word بنجاح');
-            } catch(e) {
-                console.error('doExportWord error:', e);
-                showToastLong('❌ ' + (e.message || 'خطأ غير معروف في تصدير Word'));
-            }
-        }
-
-        function exportWord() { showWordSectionPicker(); }
-
+       
         // ═══════════════════════════════════════
         // ANALYSIS FEATURES
         // ═══════════════════════════════════════
