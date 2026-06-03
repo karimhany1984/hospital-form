@@ -6815,246 +6815,171 @@ function setNote(ik, val) {
         // ═══════════════════════════════════════
         // ZIP ENGINE (offline - no external libs)
         // ═══════════════════════════════════════
-        const CRC_TABLE = (() => {
-            const t = new Uint32Array(256);
-            for (let i = 0; i < 256; i++) { let c = i; for (let j = 0; j < 8; j++)c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[i] = c; }
-            return t;
-        })();
-        function crc32(data) { let c = 0xFFFFFFFF; for (let i = 0; i < data.length; i++)c = CRC_TABLE[(c ^ data[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
-        function u16le(v) { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0, v, true); return b; }
-        function u32le(v) { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v, true); return b; }
+       const CRC_TABLE = (() => {
+        const t = new Uint32Array(256);
+        for (let i = 0; i < 256; i++) { let c = i; for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[i] = c; }
+        return t;
+    })();
+    function crc32(data) { let c = 0xFFFFFFFF; for (let i = 0; i < data.length; i++) c = CRC_TABLE[(c ^ data[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+    function u16le(v) { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0, v, true); return b; }
+    function u32le(v) { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v, true); return b; }
 
-        async function decompDeflate(data) {
-            if (typeof DecompressionStream !== 'undefined') {
-                try {
-                    const ds = new DecompressionStream('deflate-raw');
-                    const writer = ds.writable.getWriter();
-                    const reader = ds.readable.getReader();
-                    const chunks = [];
-                    const pump = () => reader.read().then(({ done, value }) => {
-                        if (done) return;
-                        chunks.push(value); return pump();
-                    });
-                    writer.write(data); writer.close();
-                    await pump();
-                    const out = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
-                    let p = 0; for (const c of chunks) { out.set(c, p); p += c.length; }
-                    return out;
-                } catch(e) { /* fall through to pure-JS */ }
-            }
-            // Pure-JS DEFLATE fallback — uses a growing Uint8Array (NOT a plain [] array)
-            // to avoid the massive memory overhead of boxing every byte as a JS object.
-            function rb(d, pos) { return function (n) { let v = 0; for (let i = 0; i < n; i++) { v |= ((d[pos[0] >> 3] >> (pos[0] & 7)) & 1) << i; pos[0]++; } return v; } }
-            const pos = [0], read = rb(data, pos);
-            // Growing typed buffer: start at 4× compressed size, double when needed
-            let cap = Math.max(data.length * 4, 65536);
-            let out = new Uint8Array(cap);
-            let olen = 0;
-            function grow() { cap *= 2; const nb = new Uint8Array(cap); nb.set(out); out = nb; }
-            function wb(b) { if (olen >= cap) grow(); out[olen++] = b; }
-            const LS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
-            const LE = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
-            const DS = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
-            const DE = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
-            function bt(ls) { const mx = Math.max(...ls); const cnt = new Array(mx + 1).fill(0); for (const l of ls) if (l > 0) cnt[l]++; const nc = new Array(mx + 1).fill(0); let c = 0; for (let i = 1; i <= mx; i++) { c = (c + cnt[i - 1]) << 1; nc[i] = c; } const tb = {}; for (let i = 0; i < ls.length; i++) { const l = ls[i]; if (l > 0) { const cd = nc[l]; nc[l]++; let rv = 0; for (let j = 0; j < l; j++)rv |= ((cd >> j) & 1) << (l - 1 - j); tb[rv + ',' + l] = i; } } return { tb, mx }; }
-            function ds(tr) { let c = 0; for (let l = 1; l <= tr.mx; l++) { c = (c << 1) | read(1); const s = tr.tb[c + ',' + l]; if (s !== undefined) return s; } return -1; }
-            let bf = 0;
-            do {
-                bf = read(1); const bt2 = read(2);
-                if (bt2 === 0) { pos[0] = Math.ceil(pos[0] / 8) * 8; const ln = data[pos[0] / 8] | (data[pos[0] / 8 + 1] << 8); pos[0] += 32; for (let i = 0; i < ln; i++) { wb(data[pos[0] / 8]); pos[0] += 8; } }
-                else {
-                    let lt, dt;
-                    if (bt2 === 1) { const ll = []; for (let i = 0; i < 144; i++)ll.push(8); for (let i = 144; i < 256; i++)ll.push(9); for (let i = 256; i < 280; i++)ll.push(7); for (let i = 280; i < 288; i++)ll.push(8); lt = bt(ll); dt = bt(new Array(32).fill(5)); }
-                    else { const hl = read(5) + 257, hd = read(5) + 1, hc = read(4) + 4; const CO = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]; const cl = new Array(19).fill(0); for (let i = 0; i < hc; i++)cl[CO[i]] = read(3); const ct = bt(cl); const lg = []; while (lg.length < hl + hd) { const s = ds(ct); if (s < 16) lg.push(s); else if (s === 16) { const rp = lg[lg.length - 1]; for (let i = 0; i < read(2) + 3; i++)lg.push(rp); } else if (s === 17) { for (let i = 0; i < read(3) + 3; i++)lg.push(0); } else { for (let i = 0; i < read(7) + 11; i++)lg.push(0); } } lt = bt(lg.slice(0, hl)); dt = bt(lg.slice(hl)); }
-                    while (true) { const s = ds(lt); if (s === 256) break; if (s < 256) wb(s); else { const li = s - 257; const ln = LS[li] + read(LE[li]); const di = ds(dt); const dist = DS[di] + read(DE[di]); for (let i = 0; i < ln; i++) { wb(out[olen - dist]); } } }
-                }
-            } while (!bf);
-            return out.slice(0, olen);
-        }
-        async function zipRead(buf) {
-            const files = {};
-            let pos = 0;
-            while (pos < buf.length - 4) {
-                if (buf[pos] === 0x50 && buf[pos + 1] === 0x4B && buf[pos + 2] === 0x03 && buf[pos + 3] === 0x04) {
-                    const v = new DataView(buf.buffer, buf.byteOffset + pos);
-                    const flags = v.getUint16(6, true);
-                    const hasDataDescriptor = (flags & 0x0008) !== 0;
-                    const comp = v.getUint16(8, true);
-                    let cmpSz = v.getUint32(18, true);
-                    const namLen = v.getUint16(26, true);
-                    const extLen = v.getUint16(28, true);
-                    
-                    const dataOff = pos + 30 + namLen + extLen;
-                    const name = new TextDecoder().decode(buf.slice(pos + 30, pos + 30 + namLen));
-                    
-                    // If Data Descriptor flag is set and cmpSz is 0, find the descriptor
-                    if (hasDataDescriptor && cmpSz === 0) {
-                        // Data Descriptor signature: PK\x07\x08
-                        let searchPos = dataOff;
-                        let found = false;
-                        for (let i = searchPos; i < Math.min(searchPos + 1000000, buf.length - 15); i++) {
-                            if (buf[i] === 0x50 && buf[i + 1] === 0x4B && buf[i + 2] === 0x07 && buf[i + 3] === 0x08) {
-                                const ddView = new DataView(buf.buffer, buf.byteOffset + i);
-                                cmpSz = ddView.getUint32(4, true);
-                                pos = i + 16; // Skip past descriptor (4 bytes sig + 4 CRC + 4 cmpSz + 4 uncmpSz)
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found) {
-                            console.warn('Data Descriptor not found for', name);
-                            break;
-                        }
-                    } else {
-                        pos = dataOff + cmpSz;
-                    }
-                    
-                    const cmpData = buf.slice(dataOff, dataOff + cmpSz);
-                    let data;
-                    if (comp === 0) { data = cmpData; } else { data = await decompDeflate(cmpData); }
-                    files[name] = data;
-                } else break;
-            }
-            return files;
-        }
-
-        // ═══════════════════════════════════════
-        // ALWAYS USE BASE64 - NO PLATFORM DETECTION
-        // ═══════════════════════════════════════
-        const _canCompress = typeof CompressionStream !== 'undefined';
-
-        // ═══════════════════════════════════════
-        // TEMPLATE LOADER (from SW cache or network)
-        // ═══════════════════════════════════════
-        async function loadTemplateFromCache(filename) {
-            // Step 1: Get SW base path via MessageChannel (2s timeout)
-            let base = '/hospital-form/';
-            let swCacheName = null;
-            if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-                try {
-                    const swData = await new Promise((resolve) => {
-                        const mc = new MessageChannel();
-                        const timer = setTimeout(() => resolve(null), 2000);
-                        mc.port1.onmessage = (e) => { clearTimeout(timer); resolve(e.data || null); };
-                        navigator.serviceWorker.controller.postMessage({ type: 'GET_CACHE_NAME' }, [mc.port2]);
-                    });
-                    if (swData && swData.base) base = swData.base;
-                    if (swData && swData.cacheName) swCacheName = swData.cacheName;
-                } catch (e) { /* SW unavailable */ }
-            }
-
-            // Step 2: Try SW cache directly (works fully offline)
-            if (swCacheName && typeof caches !== 'undefined') {
-                try {
-                    const cache = await caches.open(swCacheName);
-                    const candidates = [
-                        location.origin + base + filename,
-                        base + filename,
-                        './' + filename,
-                        filename
-                    ];
-                    for (const url of candidates) {
-                        const resp = await cache.match(url);
-                        if (resp) {
-                            const buf = await resp.arrayBuffer();
-                            if (buf.byteLength > 100) return new Uint8Array(buf);
-                        }
-                    }
-                } catch (e) { /* fall through to network */ }
-            }
-
-            // Step 3: Network fetch — try force-cache first, then normal
-            const fetchCandidates = [base + filename, './' + filename, filename];
-            for (const cacheMode of ['force-cache', 'default']) {
-                for (const url of fetchCandidates) {
-                    try {
-                        const resp = await fetch(url, { cache: cacheMode });
-                        if (resp.ok) {
-                            const buf = await resp.arrayBuffer();
-                            if (buf.byteLength > 100) return new Uint8Array(buf);
-                        }
-                    } catch (e) { /* try next */ }
-                }
-            }
-
-            throw new Error('تعذر تحميل القالب: ' + filename + '. تأكد من الاتصال بالإنترنت أو تحديث التطبيق.');
-        }
-
-        async function loadTemplateHybrid() {
-            return loadTemplateFromCache('template.xlsx');
-        }
-
-        async function loadWordTemplateHybrid() {
-            return loadTemplateFromCache('template.docx');
-        }
-
-        async function zipWrite(files) {
-    const lhs = [], cds = [];
-    let offset = 0;
-    for (const [name, rawData] of Object.entries(files)) {
-        const nb = new TextEncoder().encode(name);
-        let comp = rawData, cm = 0;
-        if (_canCompress) {
+    async function decompDeflate(data) {
+        if (typeof DecompressionStream !== 'undefined') {
             try {
-                const cs = new CompressionStream('deflate-raw');
-                const writer = cs.writable.getWriter();
-                const reader = cs.readable.getReader();
+                const ds = new DecompressionStream('deflate-raw');
+                const writer = ds.writable.getWriter();
+                const reader = ds.readable.getReader();
                 const chunks = [];
                 const pump = () => reader.read().then(({ done, value }) => {
                     if (done) return;
                     chunks.push(value);
                     return pump();
                 });
-                await writer.write(rawData);
-                await writer.close();
+                writer.write(data);
+                writer.close();
                 await pump();
-                const c = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
+                const out = new Uint8Array(chunks.reduce((a, b) => a + b.length, 0));
                 let p = 0;
-                for (const ch of chunks) {
-                    c.set(ch, p);
-                    p += ch.length;
-                }
-                if (c.length < rawData.length) {
-                    comp = c;
-                    cm = 8;
-                }
-            } catch(e) {
-                comp = rawData;
-                cm = 0;
-            }
+                for (const c of chunks) { out.set(c, p); p += c.length; }
+                return out;
+            } catch(e) { /* fall through */ }
         }
-        const crc = crc32(rawData);
-        const lh = new Uint8Array([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, ...nb, ...comp]);
-        const cd = new Uint8Array([0x50, 0x4B, 0x01, 0x02, 0x1E, 0x03, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, ...u32le(offset), ...nb]);
-        lhs.push(lh);
-        cds.push(cd);
-        offset += lh.length;
+        // Pure-JS DEFLATE fallback
+        function rb(d, pos) { return function (n) { let v = 0; for (let i = 0; i < n; i++) { v |= ((d[pos[0] >> 3] >> (pos[0] & 7)) & 1) << i; pos[0]++; } return v; } }
+        const pos = [0], read = rb(data, pos);
+        let cap = Math.max(data.length * 4, 65536);
+        let out = new Uint8Array(cap);
+        let olen = 0;
+        function grow() { cap *= 2; const nb = new Uint8Array(cap); nb.set(out); out = nb; }
+        function wb(b) { if (olen >= cap) grow(); out[olen++] = b; }
+        const LS = [3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258];
+        const LE = [0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
+        const DS = [1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577];
+        const DE = [0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
+        function bt(ls) { const mx = Math.max(...ls); const cnt = new Array(mx+1).fill(0); for(const l of ls) if(l>0) cnt[l]++; const nc = new Array(mx+1).fill(0); let c=0; for(let i=1;i<=mx;i++){c=(c+cnt[i-1])<<1; nc[i]=c;} const tb={}; for(let i=0;i<ls.length;i++){const l=ls[i]; if(l>0){const cd=nc[l]; nc[l]++; let rv=0; for(let j=0;j<l;j++) rv|=((cd>>j)&1)<<(l-1-j); tb[rv+','+l]=i;}} return{tb,mx};}
+        function ds(tr){let c=0; for(let l=1;l<=tr.mx;l++){c=(c<<1)|read(1); const s=tr.tb[c+','+l]; if(s!==undefined) return s;} return -1;}
+        let bf=0;
+        do{
+            bf=read(1); const bt2=read(2);
+            if(bt2===0){ pos[0]=Math.ceil(pos[0]/8)*8; const ln=data[pos[0]/8]|(data[pos[0]/8+1]<<8); pos[0]+=32; for(let i=0;i<ln;i++){ wb(data[pos[0]/8]); pos[0]+=8; } }
+            else{
+                let lt,dt;
+                if(bt2===1){ const ll=[]; for(let i=0;i<144;i++)ll.push(8); for(let i=144;i<256;i++)ll.push(9); for(let i=256;i<280;i++)ll.push(7); for(let i=280;i<288;i++)ll.push(8); lt=bt(ll); dt=bt(new Array(32).fill(5)); }
+                else{ const hl=read(5)+257, hd=read(5)+1, hc=read(4)+4; const CO=[16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15]; const cl=new Array(19).fill(0); for(let i=0;i<hc;i++) cl[CO[i]]=read(3); const ct=bt(cl); const lg=[]; while(lg.length<hl+hd){ const s=ds(ct); if(s<16) lg.push(s); else if(s===16){ const rp=lg[lg.length-1]; for(let i=0;i<read(2)+3;i++) lg.push(rp); } else if(s===17){ for(let i=0;i<read(3)+3;i++) lg.push(0); } else { for(let i=0;i<read(7)+11;i++) lg.push(0); } } lt=bt(lg.slice(0,hl)); dt=bt(lg.slice(hl)); }
+                while(true){ const s=ds(lt); if(s===256) break; if(s<256) wb(s); else{ const li=s-257; const ln=LS[li]+read(LE[li]); const di=ds(dt); const dist=DS[di]+read(DE[di]); for(let i=0;i<ln;i++){ wb(out[olen-dist]); } } }
+            }
+        }while(!bf);
+        return out.slice(0,olen);
     }
-    const cdOff = offset, cdSz = cds.reduce((a, b) => a + b.length, 0);
-    const eocd = new Uint8Array([0x50, 0x4B, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, ...u16le(cds.length), ...u16le(cds.length), ...u32le(cdSz), ...u32le(cdOff), 0x00, 0x00]);
-    const total = cdOff + cdSz + eocd.length, out = new Uint8Array(total);
-    let pos = 0;
-    for (const lh of lhs) { out.set(lh, pos); pos += lh.length; }
-    for (const cd of cds) { out.set(cd, pos); pos += cd.length; }
-    out.set(eocd, pos);
-    return out;
-}
+
+    async function zipRead(buf) {
+        // Use Central Directory for reliability
+        const files = {};
+        const dv = new DataView(buf.buffer, buf.byteOffset);
+        let eocdPos = -1;
+        for (let i = buf.length - 22; i >= 0; i--) {
+            if (buf[i] === 0x50 && buf[i+1] === 0x4B && buf[i+2] === 0x05 && buf[i+3] === 0x06) { eocdPos = i; break; }
+        }
+        if (eocdPos < 0) {
+            // Fallback sequential scan
+            let pos = 0;
+            while (pos + 30 < buf.length) {
+                if (buf[pos] === 0x50 && buf[pos+1] === 0x4B && buf[pos+2] === 0x03 && buf[pos+3] === 0x04) {
+                    const comp = dv.getUint16(pos+8, true), cmpSz = dv.getUint32(pos+18, true);
+                    const namLen = dv.getUint16(pos+26, true), extLen = dv.getUint16(pos+28, true);
+                    const dataOff = pos + 30 + namLen + extLen;
+                    const name = new TextDecoder().decode(buf.slice(pos+30, pos+30+namLen));
+                    const cmpData = buf.slice(dataOff, dataOff+cmpSz);
+                    files[name] = (comp === 0) ? cmpData : await decompDeflate(cmpData);
+                    pos = dataOff + cmpSz;
+                } else { pos++; }
+            }
+            return files;
+        }
+        const cdOffset = dv.getUint32(eocdPos+16, true);
+        const cdCount  = dv.getUint16(eocdPos+8, true);
+        let cdPos = cdOffset;
+        for (let i = 0; i < cdCount; i++) {
+            if (cdPos + 46 > buf.length) break;
+            if (buf[cdPos] !== 0x50 || buf[cdPos+1] !== 0x4B || buf[cdPos+2] !== 0x01 || buf[cdPos+3] !== 0x02) break;
+            const cdCmpSz = dv.getUint32(cdPos+20, true);
+            const namLen  = dv.getUint16(cdPos+28, true);
+            const extLen  = dv.getUint16(cdPos+30, true);
+            const cmtLen  = dv.getUint16(cdPos+32, true);
+            const lfhOffset = dv.getUint32(cdPos+42, true);
+            const name = new TextDecoder().decode(buf.slice(cdPos+46, cdPos+46+namLen));
+            cdPos += 46 + namLen + extLen + cmtLen;
+            if (lfhOffset + 30 > buf.length) continue;
+            const lComp   = dv.getUint16(lfhOffset+8, true);
+            let lCmpSz    = dv.getUint32(lfhOffset+18, true);
+            if (lCmpSz === 0) lCmpSz = cdCmpSz;
+            const lNamLen = dv.getUint16(lfhOffset+26, true);
+            const lExtLen = dv.getUint16(lfhOffset+28, true);
+            const dataOff = lfhOffset + 30 + lNamLen + lExtLen;
+            if (dataOff + lCmpSz > buf.length) continue;
+            const cmpData = buf.slice(dataOff, dataOff + lCmpSz);
+            files[name] = (lComp === 0) ? cmpData : await decompDeflate(cmpData);
+        }
+        return files;
+    }
+
+    const _canCompress = typeof CompressionStream !== 'undefined';
+    async function zipWrite(files) {
+        const lhs = [], cds = [];
+        let offset = 0;
+        for (const [name, rawData] of Object.entries(files)) {
+            const nb = new TextEncoder().encode(name);
+            let comp = rawData, cm = 0;
+            if (_canCompress) {
+                try {
+                    const cs = new CompressionStream('deflate-raw');
+                    const writer = cs.writable.getWriter();
+                    const reader = cs.readable.getReader();
+                    const chunks = [];
+                    const pump = () => reader.read().then(({ done, value }) => {
+                        if (done) return;
+                        chunks.push(value);
+                        return pump();
+                    });
+                    writer.write(rawData);
+                    writer.close();
+                    await pump();
+                    const c = new Uint8Array(chunks.reduce((a,b) => a+b.length,0));
+                    let p = 0;
+                    for (const ch of chunks) { c.set(ch, p); p += ch.length; }
+                    if (c.length < rawData.length) { comp = c; cm = 8; }
+                } catch(e) { comp = rawData; cm = 0; }
+            }
+            const crc = crc32(rawData);
+            const lh = new Uint8Array([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, ...nb, ...comp]);
+            const cd = new Uint8Array([0x50, 0x4B, 0x01, 0x02, 0x1E, 0x03, 0x14, 0x00, 0x00, 0x00, ...u16le(cm), 0x00, 0x00, 0x00, 0x00, ...u32le(crc), ...u32le(comp.length), ...u32le(rawData.length), ...u16le(nb.length), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, ...u32le(offset), ...nb]);
+            lhs.push(lh); cds.push(cd);
+            offset += lh.length;
+        }
+        const cdOff = offset, cdSz = cds.reduce((a,b) => a+b.length, 0);
+        const eocd = new Uint8Array([0x50, 0x4B, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, ...u16le(cds.length), ...u16le(cds.length), ...u32le(cdSz), ...u32le(cdOff), 0x00, 0x00]);
+        const total = cdOff + cdSz + eocd.length, out = new Uint8Array(total);
+        let pos = 0;
+        for (const lh of lhs) { out.set(lh, pos); pos += lh.length; }
+        for (const cd of cds) { out.set(cd, pos); pos += cd.length; }
+        out.set(eocd, pos);
+        return out;
+    }
 
         // Patch a single cell: preserve s= style attribute, update value
-        function patchCell(sheet, cellRef, value) {
-            const esc = v => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            const repl = (m, attrs) => {
-                const a = attrs.replace(/\s*t="[^"]*"/g, '');
-                if (value === null || value === '' || value === undefined) return '<c r="' + cellRef + '"' + a + '/>';
-                if (typeof value === 'number') return '<c r="' + cellRef + '"' + a + '><v>' + value + '</v></c>';
-                return '<c r="' + cellRef + '"' + a + ' t="str"><v>' + esc(value) + '</v></c>';
-            };
-            // Self-closing: <c r="I13" s="4"/>
-            sheet = sheet.replace(new RegExp('<c r="' + cellRef + '"([^/]*)/>'), repl);
-            // With content: <c r="I13" s="4" t="s"><v>...</v></c>
-            sheet = sheet.replace(new RegExp('<c r="' + cellRef + '"([^>]*)>[\s\S]*?<\/c>'), repl);
-            return sheet;
-        }
+       function patchCell(sheet, cellRef, value) {
+        const esc = v => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const repl = (m, attrs) => {
+            const a = attrs.replace(/\s*t="[^"]*"/g, '');
+            if (value === null || value === '' || value === undefined) return '<c r="' + cellRef + '"' + a + '/>';
+            if (typeof value === 'number') return '<c r="' + cellRef + '"' + a + '><v>' + value + '</v></c>';
+            return '<c r="' + cellRef + '"' + a + ' t="str"><v>' + esc(value) + '</v></c>';
+        };
+        sheet = sheet.replace(new RegExp('<c r="' + cellRef + '"([^/]*)/>'), repl);
+        sheet = sheet.replace(new RegExp('<c r="' + cellRef + '"([^>]*)>[\s\S]*?<\/c>'), repl);
+        return sheet;
+    }
 
         // Unused function removed - patchSharedString was not being called
 
@@ -7436,17 +7361,14 @@ function setNote(ik, val) {
         function closeMergeModal() {
             document.getElementById('mergeModalBg').style.display = 'none';
         }
-
-
-
 function forceRecalculation(workbookXml) {
-    if (workbookXml.includes('<calcPr')) {
-        workbookXml = workbookXml.replace(/<calcPr[^>]*\/>/, '<calcPr calcId="1" fullCalcOnLoad="1"/>');
-    } else {
-        workbookXml = workbookXml.replace(/(<\/workbook>)/, '<calcPr calcId="1" fullCalcOnLoad="1"/>$1');
+        if (workbookXml.includes('<calcPr')) {
+            workbookXml = workbookXml.replace(/<calcPr[^>]*\/>/, '<calcPr calcId="1" fullCalcOnLoad="1"/>');
+        } else {
+            workbookXml = workbookXml.replace(/(<\/workbook>)/, '<calcPr calcId="1" fullCalcOnLoad="1"/>$1');
+        }
+        return workbookXml;
     }
-    return workbookXml;
-}
 	async function exportExcel() {
             if (_exportingExcel) { showToast('جاري التصدير بالفعل، يرجى الانتظار...'); return; }
             _exportingExcel = true;
