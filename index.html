@@ -6330,6 +6330,7 @@ function escapeHtml(str) {
         let notes = {};
         let meta = { hospital: '', hospitalName: '', type: '', governorate: 'الاسكندرية', inspectors: '', dates: '', result: '' };
         let currentSection = 'home';
+        let _exportingExcel = false;
 		let currentReportFilters = { hospitalName: '', year: '', month: '' };
 		let currentAnalysisFilters = { hospitalName: '', governorate: '', year: '', month: '' };
 
@@ -7454,45 +7455,58 @@ function forceRecalculation(workbookXml) {
             try {
                 const templateBuf = await loadExcelTemplate();
 
-                // Spin up a fresh worker from serialized functions (no escaping issues)
-                const workerUrl  = URL.createObjectURL(_buildWorkerBlob());
-                const worker     = new Worker(workerUrl);
-                URL.revokeObjectURL(workerUrl);
+                showToast('جاري فتح القالب...');
+                await new Promise(r => setTimeout(r, 30));
 
-                // Send a COPY of the template buffer (transferable) + plain data
-                const templateCopy = templateBuf.slice().buffer;
+                const files = await zipRead(templateBuf);
 
-                await new Promise((resolve, reject) => {
-                    worker.onmessage = (e) => {
-                        const { status, msg, result } = e.data;
-                        if (status === 'progress') {
-                            showToast(msg);
-                        } else if (status === 'done') {
-                            worker.terminate();
-                            const blob = new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-                            const url2 = URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            const fname = (meta.region ? meta.region + '_' : '') + (meta.hospitalName || 'وحدة') + '_' + (meta.dates || new Date().toISOString().slice(0, 10)) + '.xlsx';
-                            a.href = url2; a.download = fname;
-                            document.body.appendChild(a); a.click(); document.body.removeChild(a);
-                            setTimeout(() => URL.revokeObjectURL(url2), 10000);
-                            showToast('✓ تم تصدير الملف بنجاح');
-                            resolve();
-                        } else if (status === 'error') {
-                            worker.terminate();
-                            reject(new Error(msg));
-                        }
-                    };
-                    worker.onerror = (e) => { worker.terminate(); reject(new Error(e.message)); };
+                // ── Patch sheet1.xml: scores (col C) and notes (col D) ──
+                showToast('جاري كتابة البيانات...');
+                let sheet1 = new TextDecoder('utf-8').decode(files['xl/worksheets/sheet1.xml']);
 
-                    worker.postMessage({
-                        templateBuf: templateCopy,
-                        scores:  JSON.parse(JSON.stringify(scores)),
-                        notes:   JSON.parse(JSON.stringify(notes)),
-                        ROW_MAP: ROW_MAP,
-                        meta:    { dates: meta.dates, hospitalName: meta.hospitalName, inspectors: meta.inspectors }
-                    }, [templateCopy]);
-                });
+                for (const [mapKey, exRow] of Object.entries(ROW_MAP)) {
+                    const score = scores[mapKey];
+                    const note  = notes[mapKey];
+                    if (score !== undefined) {
+                        const val = (score === 'N/A') ? 'N/A' : Number(score);
+                        sheet1 = patchCell(sheet1, 'C' + exRow, val);
+                    }
+                    if (note && String(note).trim()) {
+                        sheet1 = patchCell(sheet1, 'D' + exRow, String(note).trim());
+                    }
+                }
+                files['xl/worksheets/sheet1.xml'] = new TextEncoder().encode(sheet1);
+
+                // ── Patch sheet2.xml: metadata ──
+                if (files['xl/worksheets/sheet2.xml']) {
+                    let sheet2 = new TextDecoder('utf-8').decode(files['xl/worksheets/sheet2.xml']);
+                    if (meta.dates)        sheet2 = patchCell(sheet2, 'F1', meta.dates);
+                    if (meta.hospitalName) sheet2 = patchCell(sheet2, 'D2', meta.hospitalName);
+                    if (meta.inspectors)   sheet2 = patchCell(sheet2, 'F2', meta.inspectors);
+                    files['xl/worksheets/sheet2.xml'] = new TextEncoder().encode(sheet2);
+                }
+
+                // ── Force recalculation on open ──
+                if (files['xl/workbook.xml']) {
+                    let wbXml = new TextDecoder('utf-8').decode(files['xl/workbook.xml']);
+                    wbXml = forceRecalculation(wbXml);
+                    files['xl/workbook.xml'] = new TextEncoder().encode(wbXml);
+                }
+
+                showToast('جاري إنشاء الملف...');
+                await new Promise(r => setTimeout(r, 30));
+                const result = await zipWrite(files);
+
+                const blob  = new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const url2  = URL.createObjectURL(blob);
+                const a     = document.createElement('a');
+                const fname = (meta.region ? meta.region + '_' : '') +
+                              (meta.hospitalName || 'وحدة') + '_' +
+                              (meta.dates || new Date().toISOString().slice(0, 10)) + '.xlsx';
+                a.href = url2; a.download = fname;
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url2), 10000);
+                showToast('✓ تم تصدير الملف بنجاح');
 
             } catch (e) {
                 console.error(e);
@@ -7646,7 +7660,7 @@ function forceRecalculation(workbookXml) {
             showToast('جاري إنشاء تقرير Word...');
             await new Promise(r => setTimeout(r, 50));
             try {
-                const templateBuf = await loadWordTemplate();
+                const templateBuf = await loadWordTemplateHybrid();
                 const files = await zipRead(templateBuf);
                 let docXml = new TextDecoder('utf-8').decode(files['word/document.xml']);
 
