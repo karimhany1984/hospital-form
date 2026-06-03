@@ -7582,7 +7582,7 @@ function forceRecalculation(workbookXml) {
             showToast('جاري إنشاء تقرير Word...');
             await new Promise(r => setTimeout(r, 50));
             try {
-                const templateBuf = await loadWordTemplateHybrid();
+                const templateBuf = await loadWordTemplate();
                 const files = await zipRead(templateBuf);
                 let docXml = new TextDecoder('utf-8').decode(files['word/document.xml']);
 
