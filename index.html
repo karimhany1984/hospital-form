@@ -2437,18 +2437,18 @@ async function updateInDatabase(id) {
         recordName: `${meta.hospitalName || 'تقرير'}_${meta.dates || new Date().toISOString().slice(0, 10)}`
     };
     
-    const db = await openDB();
+   const db = await openDB();
     return new Promise((resolve, reject) => {
         const transaction = db.transaction([STORE_NAME], 'readwrite');
         const store = transaction.objectStore(STORE_NAME);
         const request = store.put(inspectionData);
-        
-        request.onsuccess = () => {
-            showToast('✓ تم تحديث التقرير');
-            resolve(request.result);
-        };
         request.onerror = () => reject(request.error);
-        transaction.oncomplete = () => db.close();
+        transaction.oncomplete = () => {
+            db.close();
+            showToast('✓ تم تحديث التقرير');
+            resolve();
+        };
+        transaction.onerror = () => reject(transaction.error);
     });
 }
 
@@ -2491,7 +2491,27 @@ async function getAllReports(limit = 50, offset = 0) {
         request.onerror = () => reject(request.error);
     });
 }
+		function normalizeDate(dateStr) {
+    if (!dateStr) return '';
+    // YYYY-MM-DD
+    let m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+    // DD/MM/YYYY
+    m = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) {
+        let dd = m[1].padStart(2,'0');
+        let mm = m[2].padStart(2,'0');
+        return `${m[3]}-${mm}-${dd}`;
+    }
+    // محاولة التحويل عبر Date object
+    const d = new Date(dateStr);
+    if (!isNaN(d)) {
+        return d.toISOString().slice(0,10);
+    }
+    return dateStr; // fallback
+}
 async function findDuplicateReport(hospitalName, inspectionDate) {
+    const normalizedInspectionDate = normalizeDate(inspectionDate);
     const db = await openDB();
     return new Promise((resolve, reject) => {
         const transaction = db.transaction([STORE_NAME], 'readonly');
@@ -2499,11 +2519,12 @@ async function findDuplicateReport(hospitalName, inspectionDate) {
         const index = store.index('hospitalName');
         const request = index.getAll(hospitalName);
         request.onsuccess = () => {
-            const matches = request.result.filter(r => r.inspectionDate === inspectionDate);
+            const matches = request.result.filter(r => normalizeDate(r.inspectionDate) === normalizedInspectionDate);
             db.close();
             resolve(matches.length > 0 ? matches[0] : null);
         };
         request.onerror = () => reject(request.error);
+        transaction.onerror = () => reject(transaction.error);
     });
 }
 // Delete report from database
@@ -2513,13 +2534,13 @@ async function deleteFromDatabase(id) {
         const transaction = db.transaction([STORE_NAME], 'readwrite');
         const store = transaction.objectStore(STORE_NAME);
         const request = store.delete(id);
-        
-        request.onsuccess = () => {
+        request.onerror = () => reject(request.error);
+        transaction.oncomplete = () => {
+            db.close();
             showToast('✓ تم حذف التقرير');
             resolve();
         };
-        request.onerror = () => reject(request.error);
-        transaction.oncomplete = () => db.close();
+        transaction.onerror = () => reject(transaction.error);
     });
 }
 
@@ -3056,6 +3077,7 @@ async function saveCurrentToDatabase() {
         const recordName = prompt('أدخل اسم للتقرير (اختياري):', `${hospitalName}_${inspectionDate}`);
         await saveToDatabase(recordName);
     }
+    // إعادة عرض قائمة التقارير إذا كنا فيها
     if (currentSection === 'reports') {
         renderReportsList(currentReportFilters);
     }
@@ -3178,9 +3200,12 @@ async function addReportToDatabase(reportData) {
         const transaction = db.transaction([STORE_NAME], 'readwrite');
         const store = transaction.objectStore(STORE_NAME);
         const request = store.add(reportData);
-        request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
-        transaction.oncomplete = () => db.close();
+        transaction.oncomplete = () => {
+            db.close();
+            resolve(request.result);
+        };
+        transaction.onerror = () => reject(transaction.error);
     });
 }
 // Enhanced merge modal for Excel import with options
