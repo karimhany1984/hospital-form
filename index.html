@@ -7862,19 +7862,23 @@ sec.subsections.forEach(sub => {
         hospitalStats[name].count++;
     });
     const hospitalRows = Object.entries(hospitalStats)
-        .map(([name, s]) => ({ name, avg: parseFloat((s.total / s.count).toFixed(1)), count: s.count }))
-        .sort((a, b) => b.avg - a.avg)
-        .slice(0, 6)
-        .map(({ name, avg, count }) => {
-            const actH = [14, 18, 12, 20, 16, 10, 22].map(h => `<span style="display:inline-block;width:3px;height:${h}px;border-radius:1px;background:var(--primary);opacity:0.7;"></span>`).join('');
-            const dotColor = avg >= 80 ? 'var(--green)' : avg >= 50 ? 'var(--accent)' : 'var(--red)';
-            return `<tr>
-                <td style="padding:6px 5px;font-size:12px;color:var(--primary);font-weight:600;">${escapeHtml(name)}</td>
-                <td style="text-align:center;padding:6px 5px;"><div style="display:flex;align-items:flex-end;gap:1px;height:22px;justify-content:center;">${actH}</div></td>
-                <td style="text-align:center;padding:6px 5px;"><div style="display:flex;justify-content:center;align-items:center;gap:3px;"><span style="width:7px;height:7px;border-radius:50%;background:${dotColor};display:inline-block;"></span><span style="font-size:11px;font-weight:700;color:var(--text);">${count}</span></div></td>
-                <td style="text-align:center;padding:6px 5px;font-size:11px;color:var(--text-muted);">${avg}%</td>
-            </tr>`;
-        }).join('');
+    .map(([name, s]) => ({ name, avg: parseFloat((s.total / s.count).toFixed(1)), count: s.count }))
+    .sort((a, b) => b.avg - a.avg)
+    .map(({ name, avg, count }) => {
+        const actH = [14, 18, 12, 20, 16, 10, 22].map(h => `<span style="display:inline-block;width:3px;height:${h}px;border-radius:1px;background:var(--primary);opacity:0.7;"></span>`).join('');
+        const dotColor = avg >= 80 ? 'var(--green)' : avg >= 50 ? 'var(--accent)' : 'var(--red)';
+        return `<tr>
+            <td style="padding:6px 5px;font-size:12px;color:var(--primary);font-weight:600;">${escapeHtml(name)}</td>
+            <td style="text-align:center;padding:6px 5px;"><div style="display:flex;align-items:flex-end;gap:1px;height:22px;justify-content:center;">${actH}</div></td>
+            <td style="text-align:center;padding:6px 5px;">
+                <div style="display:flex;justify-content:center;align-items:center;gap:3px;">
+                    <span style="width:7px;height:7px;border-radius:50%;background:${dotColor};display:inline-block;"></span>
+                    <span style="font-size:11px;font-weight:700;color:var(--text);">${count}</span>
+                </div>
+            </td>
+            <td style="text-align:center;padding:6px 5px;font-size:11px;color:var(--text-muted);">${avg}%</td>
+        </tr>`;
+    }).join('');
 
     // Weak points: average per section
     const sections = FORM_DATA.map(sec => sec.key);
@@ -8040,7 +8044,7 @@ sec.subsections.forEach(sub => {
                         <div class="stb-icon" style="font-size:14px; width:34px; height:34px;">🏥</div>
                         <div class="stb-text"><h3 style="font-size:13px;">أداء المستشفيات</h3></div>
                     </div>
-                    <div class="sum-card" style="cursor:default; padding:0;">
+                    <div class="sum-card" style="cursor:default; padding:0;max-height: 400px; overflow-y: auto;">
                         <table style="width:100%; border-collapse:collapse;">
                             <thead><tr style="border-bottom:1px solid var(--border);"><th style="text-align:right;padding:8px 10px;">المستشفى</th><th style="text-align:center;">نشاط</th><th style="text-align:center;">عدد</th><th style="text-align:center;">متوسط</th></tr></thead>
                             <tbody>${hospitalRows || '<tr><td colspan="4" style="text-align:center;padding:16px;">لا توجد بيانات</td></tr>'}</tbody>
