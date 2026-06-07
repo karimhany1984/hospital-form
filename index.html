@@ -6357,7 +6357,7 @@ function escapeHtml(str) {
         let currentSection = 'home';
         let _exportingExcel = false;
 		let currentReportFilters = { hospitalName: '', year: '', month: '' };
-		let currentAnalysisFilters = { hospitalName: '', governorate: '', year: '', month: '' };
+		let currentAnalysisFilters = { hospitalName: [], governorate: '', year: '', month: '' };
 
         // ═══════════════════════════════════════
         // INIT
@@ -7801,45 +7801,44 @@ sec.subsections.forEach(sub => {
     const years = [...new Set(allReports.map(r => {
         const d = parseDate(r.inspectionDate);
         return d ? d.getFullYear() : null;
-    }).filter(y => y))].sort((a,b)=>b-a);
+    }).filter(y => y))].sort((a, b) => b - a);
     const months = [...new Set(allReports.map(r => {
         const d = parseDate(r.inspectionDate);
-        return d ? d.getMonth()+1 : null;
-    }).filter(m => m))].sort((a,b)=>a-b);
+        return d ? d.getMonth() + 1 : null;
+    }).filter(m => m))].sort((a, b) => a - b);
 
-    // Apply filters
+    // Apply filters (hospitalNames is an array)
     let filtered = allReports.filter(r => {
-        if (filters.hospitalName && r.hospitalName !== filters.hospitalName) return false;
+        if (filters.hospitalNames && filters.hospitalNames.length > 0) {
+            if (!filters.hospitalNames.includes(r.hospitalName)) return false;
+        }
         if (filters.governorate && r.governorate !== filters.governorate) return false;
         if (filters.year || filters.month) {
             const d = parseDate(r.inspectionDate);
             if (!d) return false;
             if (filters.year && d.getFullYear() != filters.year) return false;
-            if (filters.month && (d.getMonth()+1) != filters.month) return false;
+            if (filters.month && (d.getMonth() + 1) != filters.month) return false;
         }
         return true;
     });
 
     const totalReports = allReports.length;
     const count = filtered.length;
-    const avgPct = count ? (filtered.reduce((s,r)=>s + (r.percentage||0),0)/count).toFixed(1) : 0;
+    const avgPct = count ? (filtered.reduce((s, r) => s + (r.percentage || 0), 0) / count).toFixed(1) : 0;
     const avgNum = parseFloat(avgPct);
     const gaugeColor = avgNum >= 80 ? 'var(--green)' : avgNum >= 50 ? 'var(--accent)' : 'var(--red)';
     const gaugeLabel = avgNum >= 80 ? 'جيد' : avgNum >= 50 ? 'متوسط' : 'ضعيف';
-    const gaugeArcLen = 94.2;   // π * r (r=30)
-    const gaugeFill = (avgNum / 100) * gaugeArcLen;
-    const gaugeOffset = gaugeArcLen - gaugeFill;
 
-    const best = count ? filtered.reduce((b,r)=> (r.percentage||0) > (b.percentage||0) ? r : b, filtered[0]) : null;
-    const worst = count ? filtered.reduce((w,r)=> (r.percentage||0) < (w.percentage||0) ? r : w, filtered[0]) : null;
+    const best = count ? filtered.reduce((b, r) => (r.percentage || 0) > (b.percentage || 0) ? r : b, filtered[0]) : null;
+    const worst = count ? filtered.reduce((w, r) => (r.percentage || 0) < (w.percentage || 0) ? r : w, filtered[0]) : null;
 
     // Trend over time (monthly)
     const trend = {};
     filtered.forEach(r => {
         const d = parseDate(r.inspectionDate);
         if (!d) return;
-        const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-        if (!trend[key]) trend[key] = { total:0, count:0 };
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        if (!trend[key]) trend[key] = { total: 0, count: 0 };
         trend[key].total += r.percentage;
         trend[key].count++;
     });
@@ -7851,17 +7850,16 @@ sec.subsections.forEach(sub => {
     const hospitalStats = {};
     filtered.forEach(r => {
         const name = r.hospitalName || '—';
-        if (!hospitalStats[name]) hospitalStats[name] = { total:0, count:0 };
-        hospitalStats[name].total += (r.percentage||0);
+        if (!hospitalStats[name]) hospitalStats[name] = { total: 0, count: 0 };
+        hospitalStats[name].total += (r.percentage || 0);
         hospitalStats[name].count++;
     });
     const hospitalRows = Object.entries(hospitalStats)
-        .map(([name, s]) => ({ name, avg: parseFloat((s.total/s.count).toFixed(1)), count: s.count }))
-        .sort((a,b) => b.avg - a.avg)
+        .map(([name, s]) => ({ name, avg: parseFloat((s.total / s.count).toFixed(1)), count: s.count }))
+        .sort((a, b) => b.avg - a.avg)
         .slice(0, 6)
         .map(({ name, avg, count }) => {
-            // Mini activity bars (random heights for visual interest)
-            const actH = [14,18,12,20,16,10,22].map(h=>`<span style="display:inline-block;width:3px;height:${h}px;border-radius:1px;background:var(--primary);opacity:0.7;"></span>`).join('');
+            const actH = [14, 18, 12, 20, 16, 10, 22].map(h => `<span style="display:inline-block;width:3px;height:${h}px;border-radius:1px;background:var(--primary);opacity:0.7;"></span>`).join('');
             const dotColor = avg >= 80 ? 'var(--green)' : avg >= 50 ? 'var(--accent)' : 'var(--red)';
             return `<tr>
                 <td style="padding:6px 5px;font-size:12px;color:var(--primary);font-weight:600;">${escapeHtml(name)}</td>
@@ -7874,7 +7872,7 @@ sec.subsections.forEach(sub => {
     // Weak points: average per section
     const sections = FORM_DATA.map(sec => sec.key);
     const sectionScores = {};
-    sections.forEach(sec => { sectionScores[sec] = { total:0, max:0, count:0 }; });
+    sections.forEach(sec => { sectionScores[sec] = { total: 0, max: 0, count: 0 }; });
     filtered.forEach(r => {
         if (!r.scores) return;
         sections.forEach(sec => {
@@ -7903,15 +7901,15 @@ sec.subsections.forEach(sub => {
         .map(sec => {
             const t = sectionScores[sec];
             const pct = t.count && t.max ? parseFloat((t.total / t.max * 100).toFixed(1)) : 0;
-            return { key: sec, title: FORM_DATA.find(s=>s.key===sec)?.title || sec, pct };
+            return { key: sec, title: FORM_DATA.find(s => s.key === sec)?.title || sec, pct };
         })
-        .sort((a,b) => a.pct - b.pct);
+        .sort((a, b) => a.pct - b.pct);
     const weakRows = sortedSections.map(({ title, pct }) => {
         const fillColor = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--accent)' : pct > 0 ? 'var(--red)' : 'var(--border)';
         const badge = pct >= 80 ? '<span style="background:var(--green-light);color:var(--green);font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">جيد</span>'
-                    : pct >= 50 ? '<span style="background:#fff3cd;color:#856404;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">متوسط</span>'
-                    : pct > 0 ? '<span style="background:var(--red-light);color:var(--red);font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">ضعيف</span>'
-                    : '<span style="background:var(--border-light);color:var(--text-dim);font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">لا بيانات</span>';
+            : pct >= 50 ? '<span style="background:#fff3cd;color:#856404;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">متوسط</span>'
+            : pct > 0 ? '<span style="background:var(--red-light);color:var(--red);font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">ضعيف</span>'
+            : '<span style="background:var(--border-light);color:var(--text-dim);font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">لا بيانات</span>';
         return `<div class="sum-card" style="margin-bottom:8px; cursor:default;">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
                 <div class="sum-card-title" style="margin-bottom:0;">${escapeHtml(title)}</div>
@@ -7922,31 +7920,38 @@ sec.subsections.forEach(sub => {
         </div>`;
     }).join('');
 
-    // Donut chart data: count of sections by performance level
-    const sectionPcts = sortedSections.map(s=>s.pct);
-    const good = sectionPcts.filter(p=>p>=80).length;
-    const mid  = sectionPcts.filter(p=>p>=50 && p<80).length;
-    const bad  = sectionPcts.filter(p=>p>0 && p<50).length;
-    const none = sectionPcts.filter(p=>p===0).length;
+    // Donut chart data
+    const sectionPcts = sortedSections.map(s => s.pct);
+    const good = sectionPcts.filter(p => p >= 80).length;
+    const mid = sectionPcts.filter(p => p >= 50 && p < 80).length;
+    const bad = sectionPcts.filter(p => p > 0 && p < 50).length;
+    const none = sectionPcts.filter(p => p === 0).length;
 
-    // Build filter bar HTML
+    // Build filter bar HTML with multi‑select hospital list
     const filterHtml = `
         <div class="analysis-filter-bar">
             <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
-                <select id="analysisHospital" style="flex:1; min-width:140px; padding:8px; border:1px solid var(--border); border-radius:var(--radius-sm); font-family:'Cairo',sans-serif; font-size:13px;">
-                    <option value="">🏥 كل المستشفيات</option>
-                    ${hospitals.map(h=>`<option value="${escapeHtml(h)}" ${filters.hospitalName===h?'selected':''}>${escapeHtml(h)}</option>`).join('')}
-                </select>
-                <select id="analysisYear" style="flex:1; min-width:110px; padding:8px; border:1px solid var(--border); border-radius:var(--radius-sm); font-family:'Cairo',sans-serif; font-size:13px;">
+                <div style="flex:2; min-width:180px;">
+                    <label style="font-size:12px; font-weight:600; color:var(--primary);">🏥 المستشفيات (متعدد)</label>
+                    <div style="display:flex; gap:8px; margin-bottom:4px;">
+                        <button type="button" id="selectAllHospitalsBtn" class="wpck-btn-sm" style="padding:2px 8px;">✓ تحديد الكل</button>
+                        <button type="button" id="clearAllHospitalsBtn" class="wpck-btn-sm" style="padding:2px 8px;">✗ إلغاء الكل</button>
+                    </div>
+                    <select id="analysisHospitals" multiple size="5" style="width:100%; padding:6px; border:1px solid var(--border); border-radius:var(--radius-sm); font-family:'Cairo',sans-serif; font-size:13px;">
+                        ${hospitals.map(h => `<option value="${escapeHtml(h)}" ${Array.isArray(filters.hospitalNames) && filters.hospitalNames.includes(h) ? 'selected' : ''}>${escapeHtml(h)}</option>`).join('')}
+                    </select>
+                    <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">يمكنك اختيار أكثر من مستشفى (Ctrl+نقر)</div>
+                </div>
+                <select id="analysisYear" style="flex:1; min-width:110px; padding:8px; border:1px solid var(--border); border-radius:var(--radius-sm);">
                     <option value="">📅 كل السنوات</option>
-                    ${years.map(y=>`<option value="${y}" ${filters.year==y?'selected':''}>${y}</option>`).join('')}
+                    ${years.map(y => `<option value="${y}" ${filters.year == y ? 'selected' : ''}>${y}</option>`).join('')}
                 </select>
-                <select id="analysisMonth" style="flex:1; min-width:110px; padding:8px; border:1px solid var(--border); border-radius:var(--radius-sm); font-family:'Cairo',sans-serif; font-size:13px;">
+                <select id="analysisMonth" style="flex:1; min-width:110px; padding:8px; border:1px solid var(--border); border-radius:var(--radius-sm);">
                     <option value="">🗓️ كل الشهور</option>
-                    ${months.map(m=>`<option value="${m}" ${filters.month==m?'selected':''}>${getMonthName(m)}</option>`).join('')}
+                    ${months.map(m => `<option value="${m}" ${filters.month == m ? 'selected' : ''}>${getMonthName(m)}</option>`).join('')}
                 </select>
-                <button class="qa-btn" id="applyAnalysisFilters" style="background:var(--primary); color:white; min-width:90px;">🔍 تطبيق</button>
-                <button class="qa-btn" id="resetAnalysisFilters" style="min-width:90px;">🗑️ إعادة تعيين</button>
+                <button class="qa-btn" id="applyAnalysisFilters" style="background:var(--primary); color:white;">🔍 تطبيق</button>
+                <button class="qa-btn" id="resetAnalysisFilters">🗑️ إعادة تعيين</button>
             </div>
         </div>
     `;
@@ -7956,11 +7961,8 @@ sec.subsections.forEach(sub => {
             <div class="section-title-bar">
                 <div class="stb-icon">📊</div>
                 <div class="stb-text"><h2>تحليل البيانات</h2><p>${count} تقرير مطابق للفلترة من أصل ${totalReports}</p></div>
-                
             </div>
-
             ${filterHtml}
-
             <!-- KPI Cards -->
             <div class="dashboard-grid">
                 <div class="kpi-card" style="padding:16px 20px 20px;">
@@ -7971,39 +7973,34 @@ sec.subsections.forEach(sub => {
                     <div style="position:relative;width:160px;height:88px;margin:0 auto 14px;">
                         <svg width="160" height="88" viewBox="0 0 160 88" style="display:block;">
                             <path d="M14 84 A66 66 0 0 1 146 84" fill="none" stroke="var(--border)" stroke-width="14" stroke-linecap="round"/>
-                            <path d="M14 84 A66 66 0 0 1 146 84" fill="none" stroke="${gaugeColor}" stroke-width="14" stroke-linecap="round"
-                                stroke-dasharray="207.3" stroke-dashoffset="${((1 - avgNum/100) * 207.3).toFixed(2)}"/>
+                            <path d="M14 84 A66 66 0 0 1 146 84" fill="none" stroke="${gaugeColor}" stroke-width="14" stroke-linecap="round" stroke-dasharray="207.3" stroke-dashoffset="${((1 - avgNum / 100) * 207.3).toFixed(2)}"/>
                         </svg>
                         <div style="position:absolute;bottom:4px;left:0;right:0;text-align:center;">
                             <div style="font-size:26px;font-weight:900;color:var(--text);line-height:1;">${avgPct}%</div>
                         </div>
                     </div>
                     <div style="text-align:center;">
-                        <span style="background:${avgNum>=80?'var(--green-light)':avgNum>=50?'#fff3cd':'var(--red-light)'};color:${avgNum>=80?'var(--green)':avgNum>=50?'#856404':'var(--red)'};font-size:11px;font-weight:700;padding:3px 16px;border-radius:20px;">${gaugeLabel}</span>
+                        <span style="background:${avgNum >= 80 ? 'var(--green-light)' : avgNum >= 50 ? '#fff3cd' : 'var(--red-light)'};color:${avgNum >= 80 ? 'var(--green)' : avgNum >= 50 ? '#856404' : 'var(--red)'};font-size:11px;font-weight:700;padding:3px 16px;border-radius:20px;">${gaugeLabel}</span>
                     </div>
                 </div>
-
                 <div class="kpi-card">
                     <div class="kpi-label">🏆 الأفضل أداءً</div>
                     <div class="kpi-value">${best ? best.percentage : 0}%</div>
                     <div class="kpi-unit">${best ? escapeHtml(best.hospitalName) : '—'}</div>
-                    ${best && best.inspectionDate ? (() => { const d = parseDate(best.inspectionDate); return d ? `<div style="font-size:10px;color:var(--text-dim);margin-top:4px;">${getMonthName(d.getMonth()+1)} ${d.getFullYear()}</div>` : ''; })() : ''}
+                    ${best && best.inspectionDate ? (() => { const d = parseDate(best.inspectionDate); return d ? `<div style="font-size:10px;color:var(--text-dim);margin-top:4px;">${getMonthName(d.getMonth() + 1)} ${d.getFullYear()}</div>` : ''; })() : ''}
                 </div>
-
                 <div class="kpi-card">
                     <div class="kpi-label">⚠️ يحتاج تحسين</div>
                     <div class="kpi-value">${worst ? worst.percentage : 0}%</div>
                     <div class="kpi-unit">${worst ? escapeHtml(worst.hospitalName) : '—'}</div>
-                    ${worst && worst.inspectionDate ? (() => { const d = parseDate(worst.inspectionDate); return d ? `<div style="font-size:10px;color:var(--text-dim);margin-top:4px;">${getMonthName(d.getMonth()+1)} ${d.getFullYear()}</div>` : ''; })() : ''}
+                    ${worst && worst.inspectionDate ? (() => { const d = parseDate(worst.inspectionDate); return d ? `<div style="font-size:10px;color:var(--text-dim);margin-top:4px;">${getMonthName(d.getMonth() + 1)} ${d.getFullYear()}</div>` : ''; })() : ''}
                 </div>
-
                 <div class="kpi-card">
                     <div class="kpi-label">📋 عدد التقارير</div>
                     <div class="kpi-value">${count}</div>
                     <div class="kpi-unit">من إجمالي ${totalReports}</div>
                 </div>
             </div>
-
             <!-- Trend Chart -->
             <div class="section-title-bar" style="margin-top:4px;">
                 <div class="stb-icon" style="font-size:16px;">📈</div>
@@ -8012,13 +8009,11 @@ sec.subsections.forEach(sub => {
             <div class="sum-card" style="cursor:default; padding:16px; margin-bottom:16px;">
                 ${trendData.length > 0 ? `
                 <div style="position:relative; width:100%; height:200px;">
-                    <canvas id="analysisTrendChart" role="img" aria-label="رسم بياني للاتجاه الزمني لمتوسط الامتثال شهرياً">بيانات الاتجاه الزمني</canvas>
+                    <canvas id="analysisTrendChart" role="img" aria-label="رسم بياني للاتجاه الزمني لمتوسط الامتثال شهرياً"></canvas>
                 </div>` : `<div style="text-align:center;padding:40px;color:var(--text-muted);">لا توجد بيانات كافية للاتجاه الزمني</div>`}
             </div>
-
             <!-- Two columns: Hospitals table + Donut chart -->
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
-                <!-- Hospitals performance table -->
                 <div>
                     <div class="section-title-bar" style="margin-bottom:10px; padding:12px 16px;">
                         <div class="stb-icon" style="font-size:14px; width:34px; height:34px;">🏥</div>
@@ -8038,8 +8033,6 @@ sec.subsections.forEach(sub => {
                         </table>
                     </div>
                 </div>
-
-                <!-- Donut Chart -->
                 <div>
                     <div class="section-title-bar" style="margin-bottom:10px; padding:12px 16px;">
                         <div class="stb-icon" style="font-size:14px; width:34px; height:34px;">🍩</div>
@@ -8047,7 +8040,7 @@ sec.subsections.forEach(sub => {
                     </div>
                     <div class="sum-card" style="cursor:default; padding:16px;">
                         <div style="position:relative; width:100%; height:180px;">
-                            <canvas id="analysisDonutChart" role="img" aria-label="رسم دائري لتوزيع أداء الأقسام">توزيع أداء الأقسام</canvas>
+                            <canvas id="analysisDonutChart" role="img" aria-label="رسم دائري لتوزيع أداء الأقسام"></canvas>
                         </div>
                         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;justify-content:center;">
                             <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted);"><span style="width:10px;height:10px;border-radius:2px;background:#1a8a4a;display:inline-block;"></span>جيد ≥80%</span>
@@ -8057,7 +8050,6 @@ sec.subsections.forEach(sub => {
                     </div>
                 </div>
             </div>
-
             <!-- Weak Points -->
             <div class="section-title-bar" style="margin-top:4px;">
                 <div class="stb-icon" style="font-size:16px;">⚠️</div>
@@ -8067,87 +8059,118 @@ sec.subsections.forEach(sub => {
                 ${weakRows}
             </div>
         </div>
-
-    `;   // end html template literal
+    `;
 
     document.getElementById('mainContent').innerHTML = html;
 
     // Attach filter events
-    document.getElementById('applyAnalysisFilters').onclick = () => {
+    const hospitalsSelect = document.getElementById('analysisHospitals');
+    const yearSelect = document.getElementById('analysisYear');
+    const monthSelect = document.getElementById('analysisMonth');
+    const applyBtn = document.getElementById('applyAnalysisFilters');
+    const resetBtn = document.getElementById('resetAnalysisFilters');
+    const selectAllBtn = document.getElementById('selectAllHospitalsBtn');
+    const clearAllBtn = document.getElementById('clearAllHospitalsBtn');
+
+    const doFilter = () => {
+        const selectedOptions = Array.from(hospitalsSelect.selectedOptions).map(opt => opt.value);
         currentAnalysisFilters = {
-            hospitalName: document.getElementById('analysisHospital').value,
-            governorate: document.getElementById('analysisGovernorate')?.value || '',
-            year: document.getElementById('analysisYear').value,
-            month: document.getElementById('analysisMonth').value
+            hospitalNames: selectedOptions,
+            governorate: '', // if you add a governorate filter, read its value here
+            year: yearSelect.value,
+            month: monthSelect.value
         };
         renderAnalysis(currentAnalysisFilters);
     };
-    document.getElementById('resetAnalysisFilters').onclick = () => {
-        currentAnalysisFilters = { hospitalName: '', governorate: '', year: '', month: '' };
-        renderAnalysis(currentAnalysisFilters);
-    };
 
-    // Charts must run after innerHTML — scripts inside innerHTML are never executed by browsers
-    const _tl = trendLabels.slice();
-    const _td = trendData.slice();
-    const _g = good, _m = mid, _b = bad, _n = none;
+    if (applyBtn) applyBtn.onclick = doFilter;
+    if (resetBtn) {
+        resetBtn.onclick = () => {
+            hospitalsSelect.selectedIndex = -1;
+            yearSelect.value = '';
+            monthSelect.value = '';
+            doFilter();
+        };
+    }
+    if (selectAllBtn) {
+        selectAllBtn.onclick = () => {
+            for (let opt of hospitalsSelect.options) opt.selected = true;
+            doFilter();
+        };
+    }
+    if (clearAllBtn) {
+        clearAllBtn.onclick = () => {
+            for (let opt of hospitalsSelect.options) opt.selected = false;
+            doFilter();
+        };
+    }
 
-    function _drawCharts() {
-        var tc = document.getElementById('analysisTrendChart');
-        if (tc && _td.length > 0) {
+    // Draw charts (if Chart.js is loaded)
+    const trendLabelsLocal = trendLabels.slice();
+    const trendDataLocal = trendData.slice();
+    const goodCount = good, midCount = mid, badCount = bad, noneCount = none;
+
+    const drawCharts = () => {
+        const tc = document.getElementById('analysisTrendChart');
+        if (tc && trendDataLocal.length > 0) {
             new Chart(tc, {
                 type: 'line',
                 data: {
-                    labels: _tl,
-                    datasets: [{ label: 'متوسط الامتثال', data: _td, borderColor: '#1a6faf', backgroundColor: 'rgba(26,111,175,0.08)', borderWidth: 2, fill: true, tension: 0.4, pointBackgroundColor: '#1a6faf', pointRadius: 4 }]
+                    labels: trendLabelsLocal,
+                    datasets: [{ label: 'متوسط الامتثال', data: trendDataLocal, borderColor: '#1a6faf', backgroundColor: 'rgba(26,111,175,0.08)', borderWidth: 2, fill: true, tension: 0.4, pointBackgroundColor: '#1a6faf', pointRadius: 4 }]
                 },
                 options: {
                     responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { return ctx.parsed.y + '%'; } } } },
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ctx.parsed.y + '%' } } },
                     scales: {
                         x: { ticks: { font: { family: 'Cairo, sans-serif', size: 11 }, color: '#5a6a7e', maxRotation: 45 }, grid: { color: 'rgba(0,0,0,0.05)' } },
-                        y: { min: 0, max: 100, ticks: { font: { family: 'Cairo, sans-serif', size: 11 }, color: '#5a6a7e', callback: function(v) { return v + '%'; } }, grid: { color: 'rgba(0,0,0,0.05)' } }
+                        y: { min: 0, max: 100, ticks: { font: { family: 'Cairo, sans-serif', size: 11 }, color: '#5a6a7e', callback: (v) => v + '%' }, grid: { color: 'rgba(0,0,0,0.05)' } }
                     }
                 }
             });
         }
-        var dc = document.getElementById('analysisDonutChart');
+        const dc = document.getElementById('analysisDonutChart');
         if (dc) {
-            var dd = [_g, _m, _b];
-            var dl = ['جيد', 'متوسط', 'ضعيف'];
-            var dc2 = ['#1a8a4a', '#e8a020', '#c0392b'];
-            if (_n > 0) { dd.push(_n); dl.push('بلا بيانات'); dc2.push('#d4dde8'); }
+            let dd = [goodCount, midCount, badCount];
+            let dl = ['جيد', 'متوسط', 'ضعيف'];
+            let dc2 = ['#1a8a4a', '#e8a020', '#c0392b'];
+            if (noneCount > 0) {
+                dd.push(noneCount);
+                dl.push('بلا بيانات');
+                dc2.push('#d4dde8');
+            }
             new Chart(dc, {
                 type: 'doughnut',
                 data: { labels: dl, datasets: [{ data: dd, backgroundColor: dc2, borderWidth: 2, borderColor: '#fff' }] },
-                options: { responsive: true, maintainAspectRatio: false, cutout: '65%', plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { return ctx.label + ': ' + ctx.parsed + ' أقسام'; } } } } }
+                options: { responsive: true, maintainAspectRatio: false, cutout: '65%', plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ctx.label + ': ' + ctx.parsed + ' أقسام' } } } }
             });
         }
-    }
+    };
 
     if (typeof Chart !== 'undefined') {
-        _drawCharts();
+        drawCharts();
     } else {
-        var _cs = document.createElement('script');
-        _cs.src = 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js';
-        _cs.onload = _drawCharts;
-        document.head.appendChild(_cs);
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js';
+        script.onload = drawCharts;
+        document.head.appendChild(script);
     }
 }
 
         async function exportAnalysisToExcel() {
-            const allReports = await getAllReports();
-            let filtered = allReports.filter(r => {
-                if (currentAnalysisFilters.hospitalName && r.hospitalName !== currentAnalysisFilters.hospitalName) return false;
-                if (currentAnalysisFilters.governorate && r.governorate !== currentAnalysisFilters.governorate) return false;
-                if (currentAnalysisFilters.year || currentAnalysisFilters.month) {
-                    const d = parseDate(r.inspectionDate);
-                    if (!d) return false;
-                    if (currentAnalysisFilters.year && d.getFullYear() != currentAnalysisFilters.year) return false;
-                    if (currentAnalysisFilters.month && (d.getMonth()+1) != currentAnalysisFilters.month) return false;
-                }
-                return true;
-            });
+          let filtered = allReports.filter(r => {
+        if (currentAnalysisFilters.hospitalNames && currentAnalysisFilters.hospitalNames.length > 0) {
+            if (!currentAnalysisFilters.hospitalNames.includes(r.hospitalName)) return false;
+        }
+        if (currentAnalysisFilters.governorate && r.governorate !== currentAnalysisFilters.governorate) return false;
+        if (currentAnalysisFilters.year || currentAnalysisFilters.month) {
+            const d = parseDate(r.inspectionDate);
+            if (!d) return false;
+            if (currentAnalysisFilters.year && d.getFullYear() != currentAnalysisFilters.year) return false;
+            if (currentAnalysisFilters.month && (d.getMonth()+1) != currentAnalysisFilters.month) return false;
+        }
+        return true;
+    });
             let csvRows = [['اسم المستشفى', 'المحافظة', 'تاريخ التقييم', 'النسبة المئوية', 'النقاط المحققة', 'النقاط القصوى']];
             filtered.forEach(r => {
                 csvRows.push([r.hospitalName, r.governorate, r.inspectionDate, r.percentage, r.totalEarned, r.totalMax]);
