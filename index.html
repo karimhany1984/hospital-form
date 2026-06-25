@@ -1003,6 +1003,13 @@ body {
 .sum-card-highlighted .sum-earned { color:var(--accent); }
 .qa-btn-clear-hl { background:var(--accent-light); color:var(--accent); border:1.5px solid var(--accent); }
 
+/* ── Highlighted nav item in sidebar ── */
+.nav-item.nav-highlighted { background: linear-gradient(135deg, #fffbf2, #fef3dc); border-right: 3px solid var(--accent) !important; }
+.nav-item.nav-highlighted .nav-title { color: var(--accent); }
+.nav-item.nav-highlighted .nav-icon { background: var(--accent-light); color: var(--accent); }
+.nav-item.nav-highlighted:hover { background: linear-gradient(135deg, #fef3dc, #fde8b0); }
+.nav-hl-dot { font-size:11px; margin-right:2px; flex-shrink:0; opacity:0.85; }
+
     /* ========== MOBILE BOTTOM NAV ========== */
     .mobile-nav {
         position: fixed;
@@ -6416,13 +6423,16 @@ function escapeHtml(str) {
         if (answered > 0 && answered < total) { pillClass = 'pill-partial'; pillText = `${answered}/${total}` }
         else if (answered === total && total > 0) { pillClass = 'pill-done'; pillText = `✓` }
         const isActive = currentSection === sec.key;
-        html += `<div class="nav-item ${isActive ? 'active' : ''}" id="nav-${sec.key}" onclick="showSection('${sec.key}');closeSidebar()">
+        const isHighlighted = !!highlightedSections[sec.key];
+        const hlClass = isHighlighted ? ' nav-highlighted' : '';
+        const hlDot = isHighlighted ? `<span class="nav-hl-dot">🔔</span>` : '';
+        html += `<div class="nav-item${isActive ? ' active' : ''}${hlClass}" id="nav-${sec.key}" onclick="showSection('${sec.key}');closeSidebar()">
           <div class="nav-icon ic-${sec.key}"></div>
           <div class="nav-text">
             <div class="nav-title">${sec.title}</div>
             <div class="nav-sub">${sec.max} نقطة · ${sec.subsections.reduce((a, s) => a + s.items.length, 0)} عنصر</div>
           </div>
-          <span class="nav-pill ${pillClass}" id="npill-${sec.key}">${pillText}</span>
+          ${hlDot}<span class="nav-pill ${pillClass}" id="npill-${sec.key}">${pillText}</span>
         </div>`;
     });
 
@@ -6441,6 +6451,19 @@ function escapeHtml(str) {
             else if (answered === total && total > 0) { pillClass = 'pill-done'; pillText = '✓' }
             pill.className = `nav-pill ${pillClass}`;
             pill.textContent = pillText;
+            // Update highlight class
+            const isHighlighted = !!highlightedSections[key];
+            el.classList.toggle('nav-highlighted', isHighlighted);
+            // Update or remove the bell dot
+            let dot = el.querySelector('.nav-hl-dot');
+            if (isHighlighted && !dot) {
+                dot = document.createElement('span');
+                dot.className = 'nav-hl-dot';
+                dot.textContent = '🔔';
+                el.insertBefore(dot, pill);
+            } else if (!isHighlighted && dot) {
+                dot.remove();
+            }
         }
 
         // ═══════════════════════════════════════
@@ -6711,12 +6734,14 @@ function escapeHtml(str) {
                 highlightedSections[key] = true;
             }
             debounceSave();
+            buildSidebarNav();
             renderSummary();
         }
 
         function clearAllHighlights() {
             highlightedSections = {};
             debounceSave();
+            buildSidebarNav();
             renderSummary();
         }
 
