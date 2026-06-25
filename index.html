@@ -2589,6 +2589,101 @@ async function searchReports(criteria) {
 }
 
 // Import Excel with conflict resolution
+// ── Detect yellow D6:D40 cells in الاجمالى and mark sections as 'imported' ──
+function _applyImportedHighlights(files) {
+    try {
+        if (!files['xl/workbook.xml'] || !files['xl/_rels/workbook.xml.rels'] || !files['xl/styles.xml']) {
+            console.warn('[importHL] Missing workbook/rels/styles'); return;
+        }
+        const wbXml     = new TextDecoder('utf-8').decode(files['xl/workbook.xml']);
+        const wbRelsXml = new TextDecoder('utf-8').decode(files['xl/_rels/workbook.xml.rels']);
+        const stylesXml = new TextDecoder('utf-8').decode(files['xl/styles.xml']);
+
+        // 1. Find الاجمالى sheet path
+        let ijmaliPath = null;
+        const sheetNames = ['الاجمالى','الإجمالى','الاجمالي','الإجمالي','اجمالى','اجمالي'];
+        for (const name of sheetNames) {
+            const sm = wbXml.match(new RegExp('<sheet[^>]+name="' + name + '"[^>]+r:id="([^"]+)"')) ||
+                       wbXml.match(new RegExp('<sheet[^>]+r:id="([^"]+)"[^>]+name="' + name + '"'));
+            if (sm) {
+                const rm = wbRelsXml.match(new RegExp('Id="' + sm[1] + '"[^>]+Target="([^"]+)"')) ||
+                           wbRelsXml.match(new RegExp('Target="([^"]+)"[^>]+Id="' + sm[1] + '"'));
+                if (rm) { ijmaliPath = 'xl/' + rm[1].replace(/^\.\.\//, ''); break; }
+            }
+        }
+        // Fallback: 3rd sheet
+        if (!ijmaliPath) {
+            const allSheets = [...wbXml.matchAll(/<sheet[^>]+r:id="([^"]+)"/g)];
+            if (allSheets.length >= 3) {
+                const rm = wbRelsXml.match(new RegExp('Id="' + allSheets[2][1] + '"[^>]+Target="([^"]+)"')) ||
+                           wbRelsXml.match(new RegExp('Target="([^"]+)"[^>]+Id="' + allSheets[2][1] + '"'));
+                if (rm) ijmaliPath = 'xl/' + rm[1].replace(/^\.\.\//, '');
+            }
+        }
+        console.log('[importHL] ijmaliPath:', ijmaliPath, '| available xl:', Object.keys(files).filter(k=>k.includes('worksheet')));
+        if (!ijmaliPath || !files[ijmaliPath]) return;
+
+        // 2. Detect yellow style IDs from styles.xml
+        const yellowIds = new Set();
+        const fillsSec = stylesXml.match(/<fills[^>]*>([\s\S]*?)<\/fills>/);
+        if (fillsSec) {
+            const yellowFillIdx = new Set();
+            [...fillsSec[1].matchAll(/<fill>([\s\S]*?)<\/fill>/g)].forEach((m, idx) => {
+                const fx = m[1];
+                const rgbM = fx.match(/fgColor[^>]+rgb="([^"]+)"/i);
+                if (rgbM) {
+                    const rgb = rgbM[1].toUpperCase();
+                    if (rgb === 'FFFF00' || rgb === 'FFFFFF00') yellowFillIdx.add(idx);
+                }
+                const idxM = fx.match(/fgColor[^>]+indexed="(\d+)"/i);
+                if (idxM && idxM[1] === '27') yellowFillIdx.add(idx);
+            });
+            console.log('[importHL] yellowFillIdx:', [...yellowFillIdx]);
+            const xfsSec = stylesXml.match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/);
+            if (xfsSec) {
+                [...xfsSec[1].matchAll(/<xf([^>]*?)(?:\/>|>[\s\S]*?<\/xf>)/g)].forEach((m, si) => {
+                    const fM = m[1].match(/fillId="(\d+)"/);
+                    const aM = m[1].match(/applyFill="(\d+)"/);
+                    if (fM) {
+                        const apply = aM ? aM[1] !== '0' : true;
+                        if (apply && yellowFillIdx.has(parseInt(fM[1]))) yellowIds.add(si);
+                    }
+                });
+            }
+        }
+        console.log('[importHL] yellowStyleIds:', [...yellowIds]);
+        if (yellowIds.size === 0) return;
+
+        // 3. Read each D cell style in الاجمالى D6:D40
+        const ijmaliXml = new TextDecoder('utf-8').decode(files[ijmaliPath]);
+        const rowToKey = {};
+        FORM_DATA.forEach((sec, idx) => { rowToKey[6 + idx] = sec.key; });
+        let found = 0;
+        for (let row = 6; row <= 40; row++) {
+            const secKey = rowToKey[row];
+            if (!secKey) continue;
+            // Get s attribute of cell D{row}
+            const cellRef = 'D' + row;
+            const ci = ijmaliXml.indexOf('r="' + cellRef + '"');
+            if (ci === -1) continue;
+            const cs = ijmaliXml.lastIndexOf('<c ', ci);
+            if (cs === -1) continue;
+            const ce = ijmaliXml.indexOf('>', cs);
+            const tag = ijmaliXml.slice(cs, ce + 1);
+            const sm2 = tag.match(/\bs="(\d+)"/);
+            if (!sm2) continue;
+            const sId = parseInt(sm2[1]);
+            if (yellowIds.has(sId)) {
+                if (highlightedSections[secKey] !== 'new') {
+                    highlightedSections[secKey] = 'imported';
+                    found++;
+                }
+            }
+        }
+        console.log('[importHL] marked', found, 'sections as imported');
+    } catch(e) { console.warn('[importHL error]', e); }
+}
+
 async function importExcelWithOptions(file, importMode = 'new') {
     // Mode: 'new' = add as new record, 'replace' = replace current, 'merge' = merge into current
     const buf = new Uint8Array(await file.arrayBuffer());
@@ -2704,6 +2799,8 @@ async function importExcelWithOptions(file, importMode = 'new') {
         meta.type = importedMeta.type;
         scores = importedScores;
         notes = importedNotes;
+        highlightedSections = {};  // reset highlights before detecting
+        _applyImportedHighlights(files);
         updateMetaResult();
         saveToLocal();
         buildSidebarNav();
@@ -2731,6 +2828,7 @@ async function importExcelWithOptions(file, importMode = 'new') {
                 notes[k] = importedNotes[k];
             }
         });
+        _applyImportedHighlights(files);
         updateMetaResult();
         saveToLocal();
         buildSidebarNav();
@@ -7249,34 +7347,6 @@ function setNote(ik, val) {
                 });
                 updateMetaResult();
 
-                // ── DETECT YELLOW HIGHLIGHTS from الاجمالى sheet ──
-                try {
-                    const wbXmlStr  = new TextDecoder('utf-8').decode(files['xl/workbook.xml']);
-                    const wbRelsStr = new TextDecoder('utf-8').decode(files['xl/_rels/workbook.xml.rels']);
-                    const ijmaliPath = findIjmaliSheetPath(wbXmlStr, wbRelsStr);
-                    if (ijmaliPath && files[ijmaliPath] && files['xl/styles.xml']) {
-                        const stylesXml  = new TextDecoder('utf-8').decode(files['xl/styles.xml']);
-                        const ijmaliXml  = new TextDecoder('utf-8').decode(files[ijmaliPath]);
-                        const yellowIds  = detectYellowStyleIds(stylesXml);
-                        if (yellowIds.size > 0) {
-                            // Build row → section key map
-                            const rowToKey = {};
-                            FORM_DATA.forEach((sec, idx) => { rowToKey[6 + idx] = sec.key; });
-                            for (let row = 6; row <= 40; row++) {
-                                const secKey = rowToKey[row];
-                                if (!secKey) continue;
-                                const sId = getCellStyleId(ijmaliXml, 'D' + row);
-                                if (sId >= 0 && yellowIds.has(sId)) {
-                                    // Only mark as imported if not already 'new' from this session
-                                    if (!highlightedSections[secKey]) {
-                                        highlightedSections[secKey] = 'imported';
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } catch(hlE) { console.warn('[Import highlight detect]', hlE); }
-
                 saveToLocal();
                 buildSidebarNav();
                 updateProgress();
@@ -7598,38 +7668,41 @@ function forceRecalculation(workbookXml) {
     function detectYellowStyleIds(stylesXml) {
         const yellowIds = new Set();
         try {
-            // 1. Parse all fills and mark yellow ones
+            // 1. Parse all fills, find yellow ones by index
             const fillsSection = stylesXml.match(/<fills[^>]*>([\s\S]*?)<\/fills>/);
             if (!fillsSection) return yellowIds;
             const fillXmls = [...fillsSection[1].matchAll(/<fill>([\s\S]*?)<\/fill>/g)];
             const yellowFillIndices = new Set();
             fillXmls.forEach((m, idx) => {
                 const fillXml = m[1];
-                // Match fgColor rgb containing FF00 (yellow family: FFFF00, FFFFFF00, etc.)
-                const rgbM = fillXml.match(/fgColor[^>]+rgb="([^"]+)"/);
+                // rgb yellow: FFFF00 (6-char) or FFFFFF00 (8-char with alpha prefix)
+                const rgbM = fillXml.match(/fgColor[^>]+rgb="([^"]+)"/i);
                 if (rgbM) {
-                    const rgb = rgbM[1].toUpperCase().replace(/^FF/, ''); // strip alpha
-                    if (rgb === 'FFFF00' || rgb === 'FF0') yellowFillIndices.add(idx);
+                    const rgb = rgbM[1].toUpperCase();
+                    if (rgb === 'FFFF00' || rgb === 'FFFFFF00') yellowFillIndices.add(idx);
                 }
-                // Also match indexed color 27 (Excel yellow) or theme yellow
-                const idxM = fillXml.match(/fgColor[^>]+indexed="(\d+)"/);
-                if (idxM && (idxM[1] === '27' || idxM[1] === '13')) yellowFillIndices.add(idx);
+                // indexed color 27 = Excel built-in yellow
+                const idxM = fillXml.match(/fgColor[^>]+indexed="(\d+)"/i);
+                if (idxM && idxM[1] === '27') yellowFillIndices.add(idx);
             });
-            // 2. Walk cellXfs and collect style indices that reference a yellow fill
+            console.log('[detectYellow] yellowFillIndices:', [...yellowFillIndices], '/', fillXmls.length, 'fills');
+            if (yellowFillIndices.size === 0) return yellowIds;
+            // 2. Walk cellXfs → collect style indices whose fillId maps to a yellow fill
             const cellXfsSection = stylesXml.match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/);
             if (!cellXfsSection) return yellowIds;
             const xfList = [...cellXfsSection[1].matchAll(/<xf([^>]*?)(?:\/>|>[\s\S]*?<\/xf>)/g)];
             xfList.forEach((m, styleIdx) => {
                 const attrs = m[1];
                 const fillIdM = attrs.match(/fillId="(\d+)"/);
-                const applyFillM = attrs.match(/applyFill="(\d+)"/);
+                const applyM  = attrs.match(/applyFill="(\d+)"/);
                 if (fillIdM) {
                     const fillId = parseInt(fillIdM[1]);
-                    const apply = applyFillM ? applyFillM[1] !== '0' : true;
+                    const apply  = applyM ? applyM[1] !== '0' : true;
                     if (apply && yellowFillIndices.has(fillId)) yellowIds.add(styleIdx);
                 }
             });
-        } catch(e) { console.warn('[detectYellow]', e); }
+            console.log('[detectYellow] yellow styleIds:', [...yellowIds]);
+        } catch(e) { console.warn('[detectYellowStyleIds]', e); }
         return yellowIds;
     }
 
