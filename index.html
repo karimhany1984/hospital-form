@@ -992,6 +992,17 @@ body {
 .sum-max { font-size: 12px; color: var(--text-muted); }
 .sum-pct { font-size: 13px; font-weight: 700; }
 
+/* ── Highlight feature ── */
+.sum-card-header { display:flex; align-items:flex-start; justify-content:space-between; gap:4px; margin-bottom:8px; }
+.sum-card-title { font-size:13px; font-weight:700; color:var(--text); flex:1; }
+.sum-highlight-btn { background:none; border:none; font-size:15px; cursor:pointer; padding:1px 3px; opacity:0.3; transition:opacity 0.15s, transform 0.15s; flex-shrink:0; line-height:1; border-radius:4px; }
+.sum-highlight-btn:hover { opacity:1; transform:scale(1.15); }
+.sum-highlight-btn.active { opacity:1; }
+.sum-card-highlighted { border:2px solid var(--accent) !important; background:linear-gradient(135deg,#fffbf2 0%,#fef3dc 100%) !important; }
+.sum-card-highlighted .sum-card-title { color:var(--accent); }
+.sum-card-highlighted .sum-earned { color:var(--accent); }
+.qa-btn-clear-hl { background:var(--accent-light); color:var(--accent); border:1.5px solid var(--accent); }
+
     /* ========== MOBILE BOTTOM NAV ========== */
     .mobile-nav {
         position: fixed;
@@ -6356,6 +6367,7 @@ function escapeHtml(str) {
         let scores = {};
         let notes = {};
         let meta = { hospital: '', hospitalName: '', type: '', governorate: 'الاسكندرية', inspectors: '', dates: '', result: '' };
+        let highlightedSections = {};
         let currentSection = 'home';
         let _exportingExcel = false;
 		let currentReportFilters = { hospitalName: '', year: '', month: '' };
@@ -6648,8 +6660,14 @@ function escapeHtml(str) {
                 const fillClass = pct >= 80 ? 'fill-h' : pct >= 50 ? 'fill-m' : pct > 0 ? 'fill-l' : '';
                 const fillColor = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--orange)' : pct > 0 ? 'var(--red)' : 'var(--border)';
                 const pctColor2 = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--orange)' : pct > 0 ? 'var(--red)' : 'var(--text-dim)';
-                return `<div class="sum-card" onclick="showSection('${sec.key}')">
-          <div class="sum-card-title">${sec.title}</div>
+                const isHighlighted = !!highlightedSections[sec.key];
+                const hlClass = isHighlighted ? ' sum-card-highlighted' : '';
+                const hlBtnClass = isHighlighted ? ' active' : '';
+                return `<div class="sum-card${hlClass}" onclick="showSection('${sec.key}')">
+          <div class="sum-card-header">
+            <div class="sum-card-title">${sec.title}</div>
+            <button class="sum-highlight-btn${hlBtnClass}" title="${isHighlighted ? 'إزالة التمييز' : 'تمييز هذا القسم'}" onclick="event.stopPropagation();toggleSectionHighlight('${sec.key}')">🔔</button>
+          </div>
           <div class="sum-bar"><div class="sum-bar-fill" style="width:${pct}%;background:${fillColor}"></div></div>
           <div class="sum-scores">
             <span class="sum-earned">${earned}</span>
@@ -6658,6 +6676,11 @@ function escapeHtml(str) {
           </div>
         </div>`;
             }).join('');
+
+            const hlCount = Object.values(highlightedSections).filter(Boolean).length;
+            const clearHlBtn = hlCount > 0
+                ? `<button class="qa-btn qa-btn-clear-hl" onclick="clearAllHighlights()">🔕 مسح كل التمييزات (${hlCount})</button>`
+                : '';
 
             document.getElementById('mainContent').innerHTML = `
         <div class="summary-view">
@@ -6675,10 +6698,26 @@ function escapeHtml(str) {
           <div class="quick-actions">
             
             <button class="qa-btn" style="background:var(--primary);color:#fff;" onclick="exportWord()">📄 تصدير Word</button>
-            
+            ${clearHlBtn}
           </div>
           <div class="sum-grid">${cardsHtml}</div>
         </div>`;
+        }
+
+        function toggleSectionHighlight(key) {
+            if (highlightedSections[key]) {
+                delete highlightedSections[key];
+            } else {
+                highlightedSections[key] = true;
+            }
+            debounceSave();
+            renderSummary();
+        }
+
+        function clearAllHighlights() {
+            highlightedSections = {};
+            debounceSave();
+            renderSummary();
         }
 
         // ═══════════════════════════════════════
@@ -6703,6 +6742,8 @@ function escapeHtml(str) {
     }
     // Normal scoring
     scores[ik] = val;
+    // Auto-highlight this section as modified
+    highlightedSections[secKey] = true;
     const row = document.getElementById(`irow-${ik}`);
     if (row) {
         // Fix: Properly manage classes
@@ -7396,6 +7437,82 @@ function forceRecalculation(workbookXml) {
         }
         return workbookXml;
     }
+
+    // ── Helper: add a yellow fill to styles.xml and return new styleIdx ──
+    function addYellowFillStyle(stylesXml) {
+        try {
+            // 1. Add fill
+            const fillsCntM = stylesXml.match(/<fills count="(\d+)"/);
+            if (!fillsCntM) return { stylesXml, styleIdx: -1 };
+            const fillsCount = parseInt(fillsCntM[1]);
+            const yellowFill = '<fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/><bgColor indexed="64"/></patternFill></fill>';
+            stylesXml = stylesXml.replace('</fills>', yellowFill + '</fills>');
+            stylesXml = stylesXml.replace(`<fills count="${fillsCount}"`, `<fills count="${fillsCount + 1}"`);
+            const yellowFillId = fillsCount; // 0-indexed
+
+            // 2. Add xf entry referencing the new fill
+            const xfsCntM = stylesXml.match(/<cellXfs count="(\d+)"/);
+            if (!xfsCntM) return { stylesXml, styleIdx: -1 };
+            const xfsCount = parseInt(xfsCntM[1]);
+            const newStyleIdx = xfsCount;
+            // Use a simple xf referencing the yellow fill
+            const newXf = `<xf numFmtId="0" fontId="0" fillId="${yellowFillId}" borderId="0" xfId="0" applyFill="1"/>`;
+            stylesXml = stylesXml.replace('</cellXfs>', newXf + '</cellXfs>');
+            stylesXml = stylesXml.replace(`<cellXfs count="${xfsCount}"`, `<cellXfs count="${xfsCount + 1}"`);
+            return { stylesXml, styleIdx: newStyleIdx };
+        } catch(e) { return { stylesXml, styleIdx: -1 }; }
+    }
+
+    // ── Helper: apply a style index to cell D{row} in a sheet XML ──
+    function applyStyleToDCell(sheetXml, row, styleIdx) {
+        const cellRef = 'D' + row;
+        // Try to update existing cell
+        const existPat = new RegExp(`(<c r="${cellRef}")(\\s[^>]*)?(/>|>)`);
+        const m = sheetXml.match(existPat);
+        if (m) {
+            let attrs = (m[2] || '').replace(/\s*s="\d+"/, '');
+            const tail = m[3];
+            sheetXml = sheetXml.replace(existPat, `<c r="${cellRef}"${attrs} s="${styleIdx}"${tail}`);
+        } else {
+            // Cell doesn't exist – insert into the correct row
+            const rowPat = new RegExp(`(<row r="${row}"[^>]*>)([\s\S]*?)(</row>)`);
+            const rm = sheetXml.match(rowPat);
+            if (rm) {
+                const newCell = `<c r="${cellRef}" s="${styleIdx}"/>`;
+                sheetXml = sheetXml.replace(rowPat, `${rm[1]}${rm[2]}${newCell}${rm[3]}`);
+            }
+        }
+        return sheetXml;
+    }
+
+    // ── Helper: find الاجمالى sheet file path from workbook.xml + rels ──
+    function findIjmaliSheetPath(wbXml, wbRelsXml) {
+        // Try to find sheet named "الاجمالى" or "الإجمالى" (with or without hamza)
+        const names = ['الاجمالى','الإجمالى','الاجمالي','الإجمالي','اجمالى','اجمالي','Sheet3','sheet3'];
+        for (const name of names) {
+            const sheetM = wbXml.match(new RegExp(`<sheet[^>]+name="${name}"[^>]+r:id="([^"]+)"`)) ||
+                           wbXml.match(new RegExp(`<sheet[^>]+r:id="([^"]+)"[^>]+name="${name}"`));
+            if (sheetM) {
+                const rId = sheetM[1];
+                const relM = wbRelsXml.match(new RegExp(`Id="${rId}"[^>]+Target="([^"]+)"`)) ||
+                             wbRelsXml.match(new RegExp(`Target="([^"]+)"[^>]+Id="${rId}"`));
+                if (relM) {
+                    const target = relM[1].replace(/^\.\.\//, '');
+                    return 'xl/' + target;
+                }
+            }
+        }
+        // Fallback: 3rd sheet in workbook
+        const allSheets = [...wbXml.matchAll(/<sheet[^>]+r:id="([^"]+)"/g)];
+        if (allSheets.length >= 3) {
+            const rId = allSheets[2][1];
+            const relM = wbRelsXml.match(new RegExp(`Id="${rId}"[^>]+Target="([^"]+)"`)) ||
+                         wbRelsXml.match(new RegExp(`Target="([^"]+)"[^>]+Id="${rId}"`));
+            if (relM) return 'xl/' + relM[1].replace(/^\.\.\//, '');
+        }
+        return null;
+    }
+
 	async function exportExcel() {
             if (_exportingExcel) { showToast('جاري التصدير بالفعل، يرجى الانتظار...'); return; }
             _exportingExcel = true;
@@ -7440,6 +7557,47 @@ function forceRecalculation(workbookXml) {
                     let wbXml = new TextDecoder('utf-8').decode(files['xl/workbook.xml']);
                     wbXml = forceRecalculation(wbXml);
                     files['xl/workbook.xml'] = new TextEncoder().encode(wbXml);
+                }
+
+                // ── Highlight: apply yellow fill to D6:D40 in الاجمالى sheet ──
+                const hlKeys = Object.keys(highlightedSections).filter(k => highlightedSections[k]);
+                if (hlKeys.length > 0 && files['xl/workbook.xml'] && files['xl/_rels/workbook.xml.rels']) {
+                    try {
+                        const wbXmlStr   = new TextDecoder('utf-8').decode(files['xl/workbook.xml']);
+                        const wbRelsStr  = new TextDecoder('utf-8').decode(files['xl/_rels/workbook.xml.rels']);
+                        const ijmaliPath = findIjmaliSheetPath(wbXmlStr, wbRelsStr);
+
+                        if (ijmaliPath && files[ijmaliPath]) {
+                            // Build section → D-row map (D6 = FORM_DATA[0], D7 = FORM_DATA[1], ...)
+                            const sectionDRowMap = {};
+                            FORM_DATA.forEach((sec, idx) => { sectionDRowMap[sec.key] = 6 + idx; });
+
+                            // Add yellow fill style
+                            let stylesXml = files['xl/styles.xml']
+                                ? new TextDecoder('utf-8').decode(files['xl/styles.xml'])
+                                : null;
+                            let yellowStyleIdx = -1;
+                            if (stylesXml) {
+                                const result2 = addYellowFillStyle(stylesXml);
+                                stylesXml = result2.stylesXml;
+                                yellowStyleIdx = result2.styleIdx;
+                                files['xl/styles.xml'] = new TextEncoder().encode(stylesXml);
+                            }
+
+                            if (yellowStyleIdx >= 0) {
+                                let ijmaliSheet = new TextDecoder('utf-8').decode(files[ijmaliPath]);
+                                hlKeys.forEach(secKey => {
+                                    const dRow = sectionDRowMap[secKey];
+                                    if (dRow !== undefined) {
+                                        ijmaliSheet = applyStyleToDCell(ijmaliSheet, dRow, yellowStyleIdx);
+                                    }
+                                });
+                                files[ijmaliPath] = new TextEncoder().encode(ijmaliSheet);
+                            }
+                        }
+                    } catch(hlErr) {
+                        console.warn('[Highlight] Yellow fill skipped:', hlErr);
+                    }
                 }
 
                 showToast('جاري إنشاء الملف...');
@@ -7688,7 +7846,7 @@ sec.subsections.forEach(sub => {
         function debounceSave() { clearTimeout(saveTimer); saveTimer = setTimeout(saveToLocal, 800); }
         function saveToLocal() {
             try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify({ scores, notes, meta, savedAt: new Date().toISOString() }));
+                localStorage.setItem(STORAGE_KEY, JSON.stringify({ scores, notes, meta, highlightedSections, savedAt: new Date().toISOString() }));
                 showToast('✓ تم الحفظ');
             } catch (e) { showToast('تعذر الحفظ'); }
         }
@@ -7699,6 +7857,7 @@ sec.subsections.forEach(sub => {
             scores = d.scores || {};
             notes = d.notes || {};  // Make sure this line exists
             meta = { ...meta, ...(d.meta || {}) };
+            highlightedSections = d.highlightedSections || {};
             
             updateMetaResult();
             buildSidebarNav();
@@ -7718,7 +7877,7 @@ sec.subsections.forEach(sub => {
 }
         function confirmClear() {
             openModal('مسح جميع البيانات', 'هل أنت متأكد؟ سيتم حذف جميع التقييمات والملاحظات.', () => {
-                scores = {}; notes = {}; meta = { hospital: '', hospitalName: '', type: '', governorate: 'الاسكندرية', inspectors: '', dates: '', result: '' };
+                scores = {}; notes = {}; meta = { hospital: '', hospitalName: '', type: '', governorate: 'الاسكندرية', inspectors: '', dates: '', result: '' }; highlightedSections = {};
                 localStorage.removeItem(STORAGE_KEY);
                 buildSidebarNav(); updateProgress(); showHome(); showToast('تم مسح البيانات');
             });
