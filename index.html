@@ -998,9 +998,14 @@ body {
 .sum-highlight-btn { background:none; border:none; font-size:15px; cursor:pointer; padding:1px 3px; opacity:0.3; transition:opacity 0.15s, transform 0.15s; flex-shrink:0; line-height:1; border-radius:4px; }
 .sum-highlight-btn:hover { opacity:1; transform:scale(1.15); }
 .sum-highlight-btn.active { opacity:1; }
+/* 'new' = yellow — modified in current session */
 .sum-card-highlighted { border:2px solid var(--accent) !important; background:linear-gradient(135deg,#fffbf2 0%,#fef3dc 100%) !important; }
 .sum-card-highlighted .sum-card-title { color:var(--accent); }
 .sum-card-highlighted .sum-earned { color:var(--accent); }
+/* 'imported' = blue — was yellow in the imported Excel */
+.sum-card-imported { border:2px solid #5ba3c9 !important; background:#D2EAF1 !important; }
+.sum-card-imported .sum-card-title { color:#1a6faf; }
+.sum-card-imported .sum-earned { color:#1a6faf; }
 .qa-btn-clear-hl { background:var(--accent-light); color:var(--accent); border:1.5px solid var(--accent); }
 
 /* ── Highlighted nav item in sidebar ── */
@@ -1008,6 +1013,10 @@ body {
 .nav-item.nav-highlighted .nav-title { color: var(--accent); }
 .nav-item.nav-highlighted .nav-icon { background: var(--accent-light); color: var(--accent); }
 .nav-item.nav-highlighted:hover { background: linear-gradient(135deg, #fef3dc, #fde8b0); }
+/* 'imported' sidebar style */
+.nav-item.nav-hl-imported { background: #D2EAF1 !important; border-right: 3px solid #5ba3c9 !important; }
+.nav-item.nav-hl-imported .nav-title { color: #1a6faf; }
+.nav-item.nav-hl-imported .nav-icon { background: #b8d9ea; color: #1a6faf; }
 .nav-hl-dot { font-size:11px; margin-right:2px; flex-shrink:0; opacity:0.85; }
 
     /* ========== MOBILE BOTTOM NAV ========== */
@@ -6423,9 +6432,11 @@ function escapeHtml(str) {
         if (answered > 0 && answered < total) { pillClass = 'pill-partial'; pillText = `${answered}/${total}` }
         else if (answered === total && total > 0) { pillClass = 'pill-done'; pillText = `✓` }
         const isActive = currentSection === sec.key;
-        const isHighlighted = !!highlightedSections[sec.key];
-        const hlClass = isHighlighted ? ' nav-highlighted' : '';
-        const hlDot = isHighlighted ? `<span class="nav-hl-dot">🔔</span>` : '';
+        const hlState = highlightedSections[sec.key];
+        const isNew      = hlState === 'new' || hlState === true;
+        const isImported = hlState === 'imported';
+        const hlClass = isNew ? ' nav-highlighted' : isImported ? ' nav-hl-imported' : '';
+        const hlDot   = (isNew || isImported) ? `<span class="nav-hl-dot">🔔</span>` : '';
         html += `<div class="nav-item${isActive ? ' active' : ''}${hlClass}" id="nav-${sec.key}" onclick="showSection('${sec.key}');closeSidebar()">
           <div class="nav-icon ic-${sec.key}"></div>
           <div class="nav-text">
@@ -6451,17 +6462,20 @@ function escapeHtml(str) {
             else if (answered === total && total > 0) { pillClass = 'pill-done'; pillText = '✓' }
             pill.className = `nav-pill ${pillClass}`;
             pill.textContent = pillText;
-            // Update highlight class
-            const isHighlighted = !!highlightedSections[key];
-            el.classList.toggle('nav-highlighted', isHighlighted);
+            // Update highlight classes
+            const hlState    = highlightedSections[key];
+            const isNew      = hlState === 'new' || hlState === true;
+            const isImported = hlState === 'imported';
+            el.classList.toggle('nav-highlighted',  isNew);
+            el.classList.toggle('nav-hl-imported',  isImported);
             // Update or remove the bell dot
             let dot = el.querySelector('.nav-hl-dot');
-            if (isHighlighted && !dot) {
+            if ((isNew || isImported) && !dot) {
                 dot = document.createElement('span');
                 dot.className = 'nav-hl-dot';
                 dot.textContent = '🔔';
                 el.insertBefore(dot, pill);
-            } else if (!isHighlighted && dot) {
+            } else if (!isNew && !isImported && dot) {
                 dot.remove();
             }
         }
@@ -6683,13 +6697,19 @@ function escapeHtml(str) {
                 const fillClass = pct >= 80 ? 'fill-h' : pct >= 50 ? 'fill-m' : pct > 0 ? 'fill-l' : '';
                 const fillColor = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--orange)' : pct > 0 ? 'var(--red)' : 'var(--border)';
                 const pctColor2 = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--orange)' : pct > 0 ? 'var(--red)' : 'var(--text-dim)';
-                const isHighlighted = !!highlightedSections[sec.key];
-                const hlClass = isHighlighted ? ' sum-card-highlighted' : '';
-                const hlBtnClass = isHighlighted ? ' active' : '';
-                return `<div class="sum-card${hlClass}" onclick="showSection('${sec.key}')">
+                const hlState = highlightedSections[sec.key]; // 'new' | 'imported' | true | undefined
+                const isNew      = hlState === 'new' || hlState === true;
+                const isImported = hlState === 'imported';
+                const isAnyHL    = isNew || isImported;
+                const cardClass  = isNew ? ' sum-card-highlighted' : isImported ? ' sum-card-imported' : '';
+                const hlBtnClass = isAnyHL ? ' active' : '';
+                const hlTitle    = isNew ? 'معدَّل في هذه الجلسة — انقر لإزالة التمييز'
+                                 : isImported ? 'معدَّل سابقاً (مستورد) — انقر للترقية لجديد'
+                                 : 'انقر لتمييز هذا القسم';
+                return `<div class="sum-card${cardClass}" onclick="showSection('${sec.key}')">
           <div class="sum-card-header">
             <div class="sum-card-title">${sec.title}</div>
-            <button class="sum-highlight-btn${hlBtnClass}" title="${isHighlighted ? 'إزالة التمييز' : 'تمييز هذا القسم'}" onclick="event.stopPropagation();toggleSectionHighlight('${sec.key}')">🔔</button>
+            <button class="sum-highlight-btn${hlBtnClass}" title="${hlTitle}" onclick="event.stopPropagation();toggleSectionHighlight('${sec.key}')">🔔</button>
           </div>
           <div class="sum-bar"><div class="sum-bar-fill" style="width:${pct}%;background:${fillColor}"></div></div>
           <div class="sum-scores">
@@ -6700,9 +6720,10 @@ function escapeHtml(str) {
         </div>`;
             }).join('');
 
-            const hlCount = Object.values(highlightedSections).filter(Boolean).length;
-            const clearHlBtn = hlCount > 0
-                ? `<button class="qa-btn qa-btn-clear-hl" onclick="clearAllHighlights()">🔕 مسح كل التمييزات (${hlCount})</button>`
+            const hlCount = Object.values(highlightedSections).filter(v => v === 'new' || v === true).length;
+            const importedCount = Object.values(highlightedSections).filter(v => v === 'imported').length;
+            const clearHlBtn = (hlCount + importedCount) > 0
+                ? `<button class="qa-btn qa-btn-clear-hl" onclick="clearAllHighlights()">🔕 مسح كل التمييزات (${hlCount + importedCount})</button>`
                 : '';
 
             document.getElementById('mainContent').innerHTML = `
@@ -6728,10 +6749,13 @@ function escapeHtml(str) {
         }
 
         function toggleSectionHighlight(key) {
-            if (highlightedSections[key]) {
-                delete highlightedSections[key];
+            const cur = highlightedSections[key];
+            if (cur === 'new' || cur === true) {
+                delete highlightedSections[key];          // new → none
+            } else if (cur === 'imported') {
+                highlightedSections[key] = 'new';         // imported → promote to new
             } else {
-                highlightedSections[key] = true;
+                highlightedSections[key] = 'new';         // none → new
             }
             debounceSave();
             buildSidebarNav();
@@ -6768,7 +6792,7 @@ function escapeHtml(str) {
     // Normal scoring
     scores[ik] = val;
     // Auto-highlight this section as modified
-    highlightedSections[secKey] = true;
+    highlightedSections[secKey] = 'new';
     const row = document.getElementById(`irow-${ik}`);
     if (row) {
         // Fix: Properly manage classes
@@ -6805,7 +6829,7 @@ function setNote(ik, val) {
     if (btn) btn.classList.toggle('has-note', !!val);
     // Auto-highlight the section when a note is added or edited
     const secKey = ik.split('__')[0];
-    if (secKey) { highlightedSections[secKey] = true; updateNavItem(secKey); }
+    if (secKey) { highlightedSections[secKey] = 'new'; updateNavItem(secKey); }
     debounceSave();
 }
 		
@@ -7224,6 +7248,35 @@ function setNote(ik, val) {
                     }));
                 });
                 updateMetaResult();
+
+                // ── DETECT YELLOW HIGHLIGHTS from الاجمالى sheet ──
+                try {
+                    const wbXmlStr  = new TextDecoder('utf-8').decode(files['xl/workbook.xml']);
+                    const wbRelsStr = new TextDecoder('utf-8').decode(files['xl/_rels/workbook.xml.rels']);
+                    const ijmaliPath = findIjmaliSheetPath(wbXmlStr, wbRelsStr);
+                    if (ijmaliPath && files[ijmaliPath] && files['xl/styles.xml']) {
+                        const stylesXml  = new TextDecoder('utf-8').decode(files['xl/styles.xml']);
+                        const ijmaliXml  = new TextDecoder('utf-8').decode(files[ijmaliPath]);
+                        const yellowIds  = detectYellowStyleIds(stylesXml);
+                        if (yellowIds.size > 0) {
+                            // Build row → section key map
+                            const rowToKey = {};
+                            FORM_DATA.forEach((sec, idx) => { rowToKey[6 + idx] = sec.key; });
+                            for (let row = 6; row <= 40; row++) {
+                                const secKey = rowToKey[row];
+                                if (!secKey) continue;
+                                const sId = getCellStyleId(ijmaliXml, 'D' + row);
+                                if (sId >= 0 && yellowIds.has(sId)) {
+                                    // Only mark as imported if not already 'new' from this session
+                                    if (!highlightedSections[secKey]) {
+                                        highlightedSections[secKey] = 'imported';
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch(hlE) { console.warn('[Import highlight detect]', hlE); }
+
                 saveToLocal();
                 buildSidebarNav();
                 updateProgress();
@@ -7541,6 +7594,96 @@ function forceRecalculation(workbookXml) {
         return null;
     }
 
+    // ── Helper: find which cellXfs style indices have a yellow fill ──
+    function detectYellowStyleIds(stylesXml) {
+        const yellowIds = new Set();
+        try {
+            // 1. Parse all fills and mark yellow ones
+            const fillsSection = stylesXml.match(/<fills[^>]*>([\s\S]*?)<\/fills>/);
+            if (!fillsSection) return yellowIds;
+            const fillXmls = [...fillsSection[1].matchAll(/<fill>([\s\S]*?)<\/fill>/g)];
+            const yellowFillIndices = new Set();
+            fillXmls.forEach((m, idx) => {
+                const fillXml = m[1];
+                // Match fgColor rgb containing FF00 (yellow family: FFFF00, FFFFFF00, etc.)
+                const rgbM = fillXml.match(/fgColor[^>]+rgb="([^"]+)"/);
+                if (rgbM) {
+                    const rgb = rgbM[1].toUpperCase().replace(/^FF/, ''); // strip alpha
+                    if (rgb === 'FFFF00' || rgb === 'FF0') yellowFillIndices.add(idx);
+                }
+                // Also match indexed color 27 (Excel yellow) or theme yellow
+                const idxM = fillXml.match(/fgColor[^>]+indexed="(\d+)"/);
+                if (idxM && (idxM[1] === '27' || idxM[1] === '13')) yellowFillIndices.add(idx);
+            });
+            // 2. Walk cellXfs and collect style indices that reference a yellow fill
+            const cellXfsSection = stylesXml.match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/);
+            if (!cellXfsSection) return yellowIds;
+            const xfList = [...cellXfsSection[1].matchAll(/<xf([^>]*?)(?:\/>|>[\s\S]*?<\/xf>)/g)];
+            xfList.forEach((m, styleIdx) => {
+                const attrs = m[1];
+                const fillIdM = attrs.match(/fillId="(\d+)"/);
+                const applyFillM = attrs.match(/applyFill="(\d+)"/);
+                if (fillIdM) {
+                    const fillId = parseInt(fillIdM[1]);
+                    const apply = applyFillM ? applyFillM[1] !== '0' : true;
+                    if (apply && yellowFillIndices.has(fillId)) yellowIds.add(styleIdx);
+                }
+            });
+        } catch(e) { console.warn('[detectYellow]', e); }
+        return yellowIds;
+    }
+
+    // ── Helper: get the s (style) attribute value of a cell ──
+    function getCellStyleId(sheetXml, cellRef) {
+        const i = sheetXml.indexOf(`r="${cellRef}"`);
+        if (i === -1) return -1;
+        const start = sheetXml.lastIndexOf('<c ', i);
+        if (start === -1) return -1;
+        const end = sheetXml.indexOf('>', start);
+        const tag = sheetXml.slice(start, end + 1);
+        const m = tag.match(/\bs="(\d+)"/);
+        return m ? parseInt(m[1]) : -1;
+    }
+
+    // ── Helper: add white (no-fill) style to styles.xml ──
+    function addWhiteFillStyle(stylesXml) {
+        try {
+            const fillsCntM = stylesXml.match(/<fills count="(\d+)"/);
+            if (!fillsCntM) return { stylesXml, styleIdx: -1 };
+            const fillsCount = parseInt(fillsCntM[1]);
+            const whiteFill = '<fill><patternFill patternType="none"/></fill>';
+            stylesXml = stylesXml.replace('</fills>', whiteFill + '</fills>');
+            stylesXml = stylesXml.replace(`<fills count="${fillsCount}"`, `<fills count="${fillsCount + 1}"`);
+            const whiteFillId = fillsCount;
+            const xfsCntM = stylesXml.match(/<cellXfs count="(\d+)"/);
+            if (!xfsCntM) return { stylesXml, styleIdx: -1 };
+            const xfsCount = parseInt(xfsCntM[1]);
+            const newXf = `<xf numFmtId="0" fontId="0" fillId="${whiteFillId}" borderId="0" xfId="0" applyFill="1"/>`;
+            stylesXml = stylesXml.replace('</cellXfs>', newXf + '</cellXfs>');
+            stylesXml = stylesXml.replace(`<cellXfs count="${xfsCount}"`, `<cellXfs count="${xfsCount + 1}"`);
+            return { stylesXml, styleIdx: xfsCount };
+        } catch(e) { return { stylesXml, styleIdx: -1 }; }
+    }
+
+    // ── Helper: write a string value into cell B{row} in the sheet ──
+    function patchBCell(sheetXml, row, textValue) {
+        if (!textValue) return sheetXml;
+        const cellRef = 'B' + row;
+        // Remove existing B cell if present
+        sheetXml = sheetXml.replace(
+            new RegExp(`<c r="${cellRef}"[^>]*(?:/>|>[\\s\\S]*?</c>)`), ''
+        );
+        // Inline string cell
+        const newCell = `<c r="${cellRef}" t="inlineStr"><is><t>${textValue}</t></is></c>`;
+        // Insert into the row before </row>
+        const rowPat = new RegExp(`(<row r="${row}"[^>]*>)([\\s\\S]*?)(</row>)`);
+        const rm = sheetXml.match(rowPat);
+        if (rm) {
+            sheetXml = sheetXml.replace(rowPat, `${rm[1]}${newCell}${rm[2]}${rm[3]}`);
+        }
+        return sheetXml;
+    }
+
 	async function exportExcel() {
             if (_exportingExcel) { showToast('جاري التصدير بالفعل، يرجى الانتظار...'); return; }
             _exportingExcel = true;
@@ -7600,28 +7743,53 @@ function forceRecalculation(workbookXml) {
                             const sectionDRowMap = {};
                             FORM_DATA.forEach((sec, idx) => { sectionDRowMap[sec.key] = 6 + idx; });
 
-                            // Add yellow fill style
+                            // Separate new vs imported keys
+                            const newKeys      = hlKeys.filter(k => highlightedSections[k] === 'new' || highlightedSections[k] === true);
+                            const importedKeys = hlKeys.filter(k => highlightedSections[k] === 'imported');
+
                             let stylesXml = files['xl/styles.xml']
                                 ? new TextDecoder('utf-8').decode(files['xl/styles.xml'])
                                 : null;
-                            let yellowStyleIdx = -1;
+
+                            let yellowStyleIdx = -1, whiteStyleIdx = -1;
                             if (stylesXml) {
-                                const result2 = addYellowFillStyle(stylesXml);
-                                stylesXml = result2.stylesXml;
-                                yellowStyleIdx = result2.styleIdx;
+                                if (newKeys.length > 0) {
+                                    const ry = addYellowFillStyle(stylesXml);
+                                    stylesXml = ry.stylesXml;
+                                    yellowStyleIdx = ry.styleIdx;
+                                }
+                                if (importedKeys.length > 0) {
+                                    const rw = addWhiteFillStyle(stylesXml);
+                                    stylesXml = rw.stylesXml;
+                                    whiteStyleIdx = rw.styleIdx;
+                                }
                                 files['xl/styles.xml'] = new TextEncoder().encode(stylesXml);
                             }
 
+                            let ijmaliSheet = new TextDecoder('utf-8').decode(files[ijmaliPath]);
+
+                            // 'new' → yellow D + date in B
                             if (yellowStyleIdx >= 0) {
-                                let ijmaliSheet = new TextDecoder('utf-8').decode(files[ijmaliPath]);
-                                hlKeys.forEach(secKey => {
+                                newKeys.forEach(secKey => {
                                     const dRow = sectionDRowMap[secKey];
                                     if (dRow !== undefined) {
                                         ijmaliSheet = applyStyleToDCell(ijmaliSheet, dRow, yellowStyleIdx);
+                                        if (meta.dates) ijmaliSheet = patchBCell(ijmaliSheet, dRow, meta.dates);
                                     }
                                 });
-                                files[ijmaliPath] = new TextEncoder().encode(ijmaliSheet);
                             }
+
+                            // 'imported' → white D (reset), no date
+                            if (whiteStyleIdx >= 0) {
+                                importedKeys.forEach(secKey => {
+                                    const dRow = sectionDRowMap[secKey];
+                                    if (dRow !== undefined) {
+                                        ijmaliSheet = applyStyleToDCell(ijmaliSheet, dRow, whiteStyleIdx);
+                                    }
+                                });
+                            }
+
+                            files[ijmaliPath] = new TextEncoder().encode(ijmaliSheet);
                         }
                     } catch(hlErr) {
                         console.warn('[Highlight] Yellow fill skipped:', hlErr);
