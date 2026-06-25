@@ -6803,6 +6803,9 @@ function setNote(ik, val) {
     console.log('Current notes object:', notes);
     const btn = document.getElementById(`nbtn-${ik}`);
     if (btn) btn.classList.toggle('has-note', !!val);
+    // Auto-highlight the section when a note is added or edited
+    const secKey = ik.split('__')[0];
+    if (secKey) { highlightedSections[secKey] = true; updateNavItem(secKey); }
     debounceSave();
 }
 		
