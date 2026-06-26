@@ -1007,6 +1007,7 @@ body {
 .sum-card-imported .sum-card-title { color:#1a6faf; }
 .sum-card-imported .sum-earned { color:#1a6faf; }
 .qa-btn-clear-hl { background:var(--accent-light); color:var(--accent); border:1.5px solid var(--accent); }
+.sum-date-badge { display:inline-block; font-size:10px; color:#888; margin-bottom:5px; background:rgba(0,0,0,0.04); border-radius:4px; padding:1px 5px; }
 
 /* ── Highlighted nav item in sidebar ── */
 .nav-item.nav-highlighted { background: linear-gradient(135deg, #fffbf2, #fef3dc); border-right: 3px solid var(--accent) !important; }
@@ -2589,6 +2590,28 @@ async function searchReports(criteria) {
 }
 
 // Import Excel with conflict resolution
+// ── Read plain text value of a cell from sheet XML ──
+function _readCellText(sheetXml, cellRef) {
+    try {
+        const ci = sheetXml.indexOf('r="' + cellRef + '"');
+        if (ci === -1) return '';
+        const cs = sheetXml.lastIndexOf('<c ', ci);
+        if (cs === -1) return '';
+        // Find end of cell (</c> or self-closing)
+        const cellEnd = sheetXml.indexOf('</c>', cs);
+        if (cellEnd === -1) return '';
+        const cellXml = sheetXml.slice(cs, cellEnd + 4);
+        // inlineStr <t>...</t>
+        const inlineM = cellXml.match(/<t[^>]*>([\s\S]*?)<\/t>/);
+        if (inlineM) return inlineM[1].trim();
+        // shared string <v>N</v> — skip (we only need inline dates)
+        // plain value <v>...</v>
+        const valM = cellXml.match(/<v>([\s\S]*?)<\/v>/);
+        if (valM) return valM[1].trim();
+        return '';
+    } catch(e) { return ''; }
+}
+
 // ── Detect yellow D6:D40 cells in الاجمالى and mark sections as 'imported' ──
 function _applyImportedHighlights(files) {
     try {
@@ -2662,7 +2685,10 @@ function _applyImportedHighlights(files) {
         for (let row = 6; row <= 40; row++) {
             const secKey = rowToKey[row];
             if (!secKey) continue;
-            // Get s attribute of cell D{row}
+            // Always read B{row} to recover any stored editing date
+            const bDate = _readCellText(ijmaliXml, 'B' + row);
+            if (bDate && !sectionDates[secKey]) sectionDates[secKey] = bDate;
+            // Get s attribute of cell D{row} to check yellow fill
             const cellRef = 'D' + row;
             const ci = ijmaliXml.indexOf('r="' + cellRef + '"');
             if (ci === -1) continue;
@@ -2678,6 +2704,8 @@ function _applyImportedHighlights(files) {
                     highlightedSections[secKey] = 'imported';
                     found++;
                 }
+                // Prefer B-column date for this section
+                if (bDate) sectionDates[secKey] = bDate;
             }
         }
         console.log('[importHL] marked', found, 'sections as imported');
@@ -6482,6 +6510,7 @@ function escapeHtml(str) {
         let notes = {};
         let meta = { hospital: '', hospitalName: '', type: '', governorate: 'الاسكندرية', inspectors: '', dates: '', result: '' };
         let highlightedSections = {};
+        let sectionDates = {};        // stores editing date per section key
         let currentSection = 'home';
         let _exportingExcel = false;
 		let currentReportFilters = { hospitalName: '', year: '', month: '' };
@@ -6535,11 +6564,13 @@ function escapeHtml(str) {
         const isImported = hlState === 'imported';
         const hlClass = isNew ? ' nav-highlighted' : isImported ? ' nav-hl-imported' : '';
         const hlDot   = (isNew || isImported) ? `<span class="nav-hl-dot">🔔</span>` : '';
+        const editDate = sectionDates[sec.key];
+        const navDateStr = (isNew || isImported) && editDate ? ` · ${editDate}` : '';
         html += `<div class="nav-item${isActive ? ' active' : ''}${hlClass}" id="nav-${sec.key}" onclick="showSection('${sec.key}');closeSidebar()">
           <div class="nav-icon ic-${sec.key}"></div>
           <div class="nav-text">
             <div class="nav-title">${sec.title}</div>
-            <div class="nav-sub">${sec.max} نقطة · ${sec.subsections.reduce((a, s) => a + s.items.length, 0)} عنصر</div>
+            <div class="nav-sub">${sec.max} نقطة · ${sec.subsections.reduce((a, s) => a + s.items.length, 0)} عنصر${navDateStr}</div>
           </div>
           ${hlDot}<span class="nav-pill ${pillClass}" id="npill-${sec.key}">${pillText}</span>
         </div>`;
@@ -6801,14 +6832,21 @@ function escapeHtml(str) {
                 const isAnyHL    = isNew || isImported;
                 const cardClass  = isNew ? ' sum-card-highlighted' : isImported ? ' sum-card-imported' : '';
                 const hlBtnClass = isAnyHL ? ' active' : '';
-                const hlTitle    = isNew ? 'معدَّل في هذه الجلسة — انقر لإزالة التمييز'
-                                 : isImported ? 'معدَّل سابقاً (مستورد) — انقر للترقية لجديد'
-                                 : 'انقر لتمييز هذا القسم';
+                const editDate   = sectionDates[sec.key] || '';
+                const dateBadge  = (isAnyHL && editDate)
+                    ? `<span class="sum-date-badge" title="تاريخ آخر تعديل">📅 ${editDate}</span>`
+                    : '';
+                const hlTitle    = isNew
+                    ? `معدَّل في هذه الجلسة${editDate ? ' — ' + editDate : ''} — انقر لإزالة التمييز`
+                    : isImported
+                    ? `معدَّل سابقاً${editDate ? ' — ' + editDate : ''} — انقر للترقية لجديد`
+                    : 'انقر لتمييز هذا القسم';
                 return `<div class="sum-card${cardClass}" onclick="showSection('${sec.key}')">
           <div class="sum-card-header">
             <div class="sum-card-title">${sec.title}</div>
             <button class="sum-highlight-btn${hlBtnClass}" title="${hlTitle}" onclick="event.stopPropagation();toggleSectionHighlight('${sec.key}')">🔔</button>
           </div>
+          ${dateBadge}
           <div class="sum-bar"><div class="sum-bar-fill" style="width:${pct}%;background:${fillColor}"></div></div>
           <div class="sum-scores">
             <span class="sum-earned">${earned}</span>
@@ -6889,8 +6927,9 @@ function escapeHtml(str) {
     }
     // Normal scoring
     scores[ik] = val;
-    // Auto-highlight this section as modified
+    // Auto-highlight this section as modified + record editing date
     highlightedSections[secKey] = 'new';
+    sectionDates[secKey] = meta.dates || new Date().toLocaleDateString('ar-EG', { year:'numeric', month:'2-digit', day:'2-digit' });
     const row = document.getElementById(`irow-${ik}`);
     if (row) {
         // Fix: Properly manage classes
@@ -6927,7 +6966,11 @@ function setNote(ik, val) {
     if (btn) btn.classList.toggle('has-note', !!val);
     // Auto-highlight the section when a note is added or edited
     const secKey = ik.split('__')[0];
-    if (secKey) { highlightedSections[secKey] = 'new'; updateNavItem(secKey); }
+    if (secKey) {
+        highlightedSections[secKey] = 'new';
+        sectionDates[secKey] = meta.dates || new Date().toLocaleDateString('ar-EG', { year:'numeric', month:'2-digit', day:'2-digit' });
+        updateNavItem(secKey);
+    }
     debounceSave();
 }
 		
@@ -7852,12 +7895,14 @@ function forceRecalculation(workbookXml) {
                                 });
                             }
 
-                            // 'imported' → white D (reset), no date
+                            // 'imported' → white D (reset), write stored editing date to B
                             if (whiteStyleIdx >= 0) {
                                 importedKeys.forEach(secKey => {
                                     const dRow = sectionDRowMap[secKey];
                                     if (dRow !== undefined) {
                                         ijmaliSheet = applyStyleToDCell(ijmaliSheet, dRow, whiteStyleIdx);
+                                        const storedDate = sectionDates[secKey];
+                                        if (storedDate) ijmaliSheet = patchBCell(ijmaliSheet, dRow, storedDate);
                                     }
                                 });
                             }
@@ -8115,7 +8160,7 @@ sec.subsections.forEach(sub => {
         function debounceSave() { clearTimeout(saveTimer); saveTimer = setTimeout(saveToLocal, 800); }
         function saveToLocal() {
             try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify({ scores, notes, meta, highlightedSections, savedAt: new Date().toISOString() }));
+                localStorage.setItem(STORAGE_KEY, JSON.stringify({ scores, notes, meta, highlightedSections, sectionDates, savedAt: new Date().toISOString() }));
                 showToast('✓ تم الحفظ');
             } catch (e) { showToast('تعذر الحفظ'); }
         }
@@ -8127,6 +8172,7 @@ sec.subsections.forEach(sub => {
             notes = d.notes || {};  // Make sure this line exists
             meta = { ...meta, ...(d.meta || {}) };
             highlightedSections = d.highlightedSections || {};
+            sectionDates = d.sectionDates || {};
             
             updateMetaResult();
             buildSidebarNav();
@@ -8146,7 +8192,7 @@ sec.subsections.forEach(sub => {
 }
         function confirmClear() {
             openModal('مسح جميع البيانات', 'هل أنت متأكد؟ سيتم حذف جميع التقييمات والملاحظات.', () => {
-                scores = {}; notes = {}; meta = { hospital: '', hospitalName: '', type: '', governorate: 'الاسكندرية', inspectors: '', dates: '', result: '' }; highlightedSections = {};
+                scores = {}; notes = {}; meta = { hospital: '', hospitalName: '', type: '', governorate: 'الاسكندرية', inspectors: '', dates: '', result: '' }; highlightedSections = {}; sectionDates = {};
                 localStorage.removeItem(STORAGE_KEY);
                 buildSidebarNav(); updateProgress(); showHome(); showToast('تم مسح البيانات');
             });
