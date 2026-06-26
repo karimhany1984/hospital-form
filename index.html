@@ -2687,8 +2687,16 @@ function _applyImportedHighlights(files) {
             if (!secKey) continue;
             // Always read B{row} to recover any stored editing date
             const bDate = _readCellText(ijmaliXml, 'B' + row);
-            if (bDate && !sectionDates[secKey]) sectionDates[secKey] = bDate;
-            // Get s attribute of cell D{row} to check yellow fill
+            if (bDate) {
+                // Store the date (don't overwrite a newer one already in memory)
+                sectionDates[secKey] = bDate;
+                // Mark as 'imported' if not already 'new'
+                if (highlightedSections[secKey] !== 'new') {
+                    highlightedSections[secKey] = 'imported';
+                    found++;
+                }
+            }
+            // Additionally check D{row} for yellow fill
             const cellRef = 'D' + row;
             const ci = ijmaliXml.indexOf('r="' + cellRef + '"');
             if (ci === -1) continue;
@@ -2700,12 +2708,15 @@ function _applyImportedHighlights(files) {
             if (!sm2) continue;
             const sId = parseInt(sm2[1]);
             if (yellowIds.has(sId)) {
+                // Yellow D = most recent edit — also mark as imported if not 'new'
                 if (highlightedSections[secKey] !== 'new') {
+                    if (!bDate) found++; // only count if not already counted via bDate
                     highlightedSections[secKey] = 'imported';
-                    found++;
                 }
-                // Prefer B-column date for this section
-                if (bDate) sectionDates[secKey] = bDate;
+                // Yellow takes priority for date if B was empty
+                if (!bDate) {
+                    // no B date but yellow — the date wasn't written, keep whatever we have
+                }
             }
         }
         console.log('[importHL] marked', found, 'sections as imported');
