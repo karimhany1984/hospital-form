@@ -2367,6 +2367,10 @@ async function saveToDatabase(recordName = null) {
         // Scores and notes
         scores: { ...scores },
         notes: { ...notes },
+
+        // Section edit dates and highlight state
+        sectionDates: { ...sectionDates },
+        highlightedSections: { ...highlightedSections },
         
         // Calculated totals
         totalEarned: 0,
@@ -2424,6 +2428,8 @@ async function loadFromDatabase(id) {
                 meta.dates = data.inspectionDate;
                 scores = data.scores || {};
                 notes = data.notes || {};
+                sectionDates = data.sectionDates || {};
+                highlightedSections = data.highlightedSections || {};
                 
                 updateMetaResult();
                 buildSidebarNav();
@@ -2458,6 +2464,8 @@ async function updateInDatabase(id) {
         inspectionDate: meta.dates || '',
         scores: { ...scores },
         notes: { ...notes },
+        sectionDates: { ...sectionDates },
+        highlightedSections: { ...highlightedSections },
         totalEarned: grandEarned,
         totalMax: grandMax,
         percentage: grandMax > 0 ? Math.round(grandEarned / grandMax * 100) : 0,
@@ -2508,7 +2516,9 @@ async function getAllReports(limit = 10000, offset = 0) {
                         percentage: cursor.value.percentage,
                         savedAt: cursor.value.savedAt,
                         governorate: cursor.value.governorate,
-                        scores: cursor.value.scores || {}
+                        scores: cursor.value.scores || {},
+                        sectionDates: cursor.value.sectionDates || {},
+                        highlightedSections: cursor.value.highlightedSections || {}
                     });
                 }
                 count++;
@@ -3096,6 +3106,29 @@ async function renderReportsList(filters = { hospitalName: '', year: '', month: 
         const dateObj = new Date(report.savedAt);
         const savedDate = dateObj.toLocaleDateString('ar-EG');
         
+        // Build edited-section pills grouped by date
+        const hl = report.highlightedSections || {};
+        const sd = report.sectionDates || {};
+        const editedKeys = Object.keys(hl).filter(k => hl[k]);
+        let editedPillsHtml = '';
+        if (editedKeys.length > 0) {
+            const byDate = {};
+            editedKeys.forEach(k => {
+                const date = sd[k] || '—';
+                if (!byDate[date]) byDate[date] = [];
+                const secObj = FORM_DATA.find(s => s.key === k);
+                byDate[date].push(secObj ? secObj.title : k);
+            });
+            const pillsInner = Object.entries(byDate).map(([date, titles]) =>
+                titles.map(title =>
+                    '<span style="display:inline-flex;align-items:center;gap:5px;background:var(--primary-light);border:1px solid var(--primary-mid);color:var(--primary);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:600;white-space:nowrap;">' +
+                    '<span>📅</span><span>' + date + '</span><span style="color:var(--text-muted);font-weight:400;">·</span><span>' + title + '</span>' +
+                    '</span>'
+                ).join('')
+            ).join('');
+            editedPillsHtml = '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">' + pillsInner + '</div>';
+        }
+
         reportsHtml += `
             <div class="sum-card" style="padding:16px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
@@ -3120,6 +3153,7 @@ async function renderReportsList(filters = { hospitalName: '', year: '', month: 
                     </div>
                 </div>
                 <div class="sum-bar" style="margin-top:12px;"><div class="sum-bar-fill" style="width:${percentage}%; background:${fillColor};"></div></div>
+                ${editedPillsHtml}
             </div>
         `;
     }
