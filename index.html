@@ -2430,6 +2430,13 @@ async function loadFromDatabase(id) {
                 notes = data.notes || {};
                 sectionDates = data.sectionDates || {};
                 highlightedSections = data.highlightedSections || {};
+                // A section marked 'new' belongs to a past (saved) session now —
+                // demote it to 'imported' (blue) so it isn't shown as edited in THIS session.
+                Object.keys(highlightedSections).forEach(k => {
+                    if (highlightedSections[k] === 'new' || highlightedSections[k] === true) {
+                        highlightedSections[k] = 'imported';
+                    }
+                });
                 
                 updateMetaResult();
                 buildSidebarNav();
@@ -3240,10 +3247,23 @@ async function exportSingleReport(id) {
         const tempMeta = { ...meta };
         const tempScores = { ...scores };
         const tempNotes = { ...notes };
+        const tempHighlighted = { ...highlightedSections };
+        const tempSectionDates = { ...sectionDates };
+        const tempSectionInspectors = { ...sectionInspectors };
         
         meta = { ...report };
         scores = report.scores || {};
         notes = report.notes || {};
+        highlightedSections = report.highlightedSections || {};
+        sectionDates = report.sectionDates || {};
+        sectionInspectors = report.sectionInspectors || {};
+        // Same session-boundary rule as loadFromDatabase: a 'new' section from a
+        // saved report belongs to a past session — treat it as 'imported' (blue).
+        Object.keys(highlightedSections).forEach(k => {
+            if (highlightedSections[k] === 'new' || highlightedSections[k] === true) {
+                highlightedSections[k] = 'imported';
+            }
+        });
         
         await exportExcel();
         
@@ -3251,6 +3271,9 @@ async function exportSingleReport(id) {
         meta = tempMeta;
         scores = tempScores;
         notes = tempNotes;
+        highlightedSections = tempHighlighted;
+        sectionDates = tempSectionDates;
+        sectionInspectors = tempSectionInspectors;
     }
 }
 
@@ -6648,6 +6671,17 @@ function escapeHtml(str) {
             const isImported = hlState === 'imported';
             el.classList.toggle('nav-highlighted',  isNew);
             el.classList.toggle('nav-hl-imported',  isImported);
+            // Keep the "· تاريخ" text in the nav-sub line in sync immediately
+            const sub = el.querySelector('.nav-sub');
+            if (sub) {
+                const sec = FORM_DATA.find(s => s.key === key);
+                if (sec) {
+                    const baseText = `${sec.max} نقطة · ${sec.subsections.reduce((a, s) => a + s.items.length, 0)} عنصر`;
+                    const editDate = sectionDates[key];
+                    const navDateStr = (isNew || isImported) && editDate ? ` · ${editDate}` : '';
+                    sub.textContent = baseText + navDateStr;
+                }
+            }
             // Update or remove the bell dot
             let dot = el.querySelector('.nav-hl-dot');
             if ((isNew || isImported) && !dot) {
@@ -7973,8 +8007,12 @@ function forceRecalculation(workbookXml) {
                                     const dRow = sectionDRowMap[secKey];
                                     if (dRow !== undefined) {
                                         ijmaliSheet = applyStyleToDCell(ijmaliSheet, dRow, yellowStyleIdx);
-                                        if (meta.dates) ijmaliSheet = patchCellOrdered(ijmaliSheet, dRow, 'B', meta.dates);
-                                        if (meta.inspectors) ijmaliSheet = patchCellOrdered(ijmaliSheet, dRow, 'A', meta.inspectors);
+                                        // Fall back to the per-section recorded date/inspector if the
+                                        // general inspection-date field (meta.dates) was left empty.
+                                        const dateToWrite = meta.dates || sectionDates[secKey];
+                                        const inspectorToWrite = meta.inspectors || sectionInspectors[secKey];
+                                        if (dateToWrite) ijmaliSheet = patchCellOrdered(ijmaliSheet, dRow, 'B', dateToWrite);
+                                        if (inspectorToWrite) ijmaliSheet = patchCellOrdered(ijmaliSheet, dRow, 'A', inspectorToWrite);
                                     }
                                 });
                             }
