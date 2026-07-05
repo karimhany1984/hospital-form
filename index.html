@@ -7918,6 +7918,7 @@ function forceRecalculation(workbookXml) {
                     if (meta.dates)        sheet2 = patchCell(sheet2, 'F1', meta.dates);
                     if (meta.hospitalName) sheet2 = patchCell(sheet2, 'D2', meta.hospitalName);
                     if (meta.inspectors)   sheet2 = patchCell(sheet2, 'F2', meta.inspectors);
+                    if (meta.type)         sheet2 = patchCell(sheet2, 'D3', meta.type);
                     files['xl/worksheets/sheet2.xml'] = new TextEncoder().encode(sheet2);
                 }
 
