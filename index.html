@@ -2607,14 +2607,16 @@ function _readCellText(sheetXml, cellRef) {
         if (ci === -1) return '';
         const cs = sheetXml.lastIndexOf('<c ', ci);
         if (cs === -1) return '';
-        // Find end of cell (</c> or self-closing)
-        const cellEnd = sheetXml.indexOf('</c>', cs);
+        const tagEnd = sheetXml.indexOf('>', cs);
+        if (tagEnd === -1) return '';
+        // Self-closing cell has no value
+        if (sheetXml[tagEnd - 1] === '/') return '';
+        const cellEnd = sheetXml.indexOf('</c>', tagEnd);
         if (cellEnd === -1) return '';
         const cellXml = sheetXml.slice(cs, cellEnd + 4);
         // inlineStr <t>...</t>
         const inlineM = cellXml.match(/<t[^>]*>([\s\S]*?)<\/t>/);
         if (inlineM) return inlineM[1].trim();
-        // shared string <v>N</v> — skip (we only need inline dates)
         // plain value <v>...</v>
         const valM = cellXml.match(/<v>([\s\S]*?)<\/v>/);
         if (valM) return valM[1].trim();
@@ -2697,9 +2699,12 @@ function _applyImportedHighlights(files) {
             if (!secKey) continue;
             // Always read B{row} to recover any stored editing date
             const bDate = _readCellText(ijmaliXml, 'B' + row);
+            // Always read A{row} to recover any stored inspector name
+            const aInspector = _readCellText(ijmaliXml, 'A' + row);
             if (bDate) {
                 // Store the date (don't overwrite a newer one already in memory)
                 sectionDates[secKey] = bDate;
+                if (aInspector) sectionInspectors[secKey] = aInspector;
                 // Mark as 'imported' if not already 'new'
                 if (highlightedSections[secKey] !== 'new') {
                     highlightedSections[secKey] = 'imported';
@@ -6556,6 +6561,7 @@ function escapeHtml(str) {
         let meta = { hospital: '', hospitalName: '', type: '', governorate: 'الاسكندرية', inspectors: '', dates: '', result: '' };
         let highlightedSections = {};
         let sectionDates = {};        // stores editing date per section key
+        let sectionInspectors = {};   // stores القائم بالتقييم name per section key
         let currentSection = 'home';
         let _exportingExcel = false;
 		let currentReportFilters = { hospitalName: '', year: '', month: '' };
@@ -6972,9 +6978,10 @@ function escapeHtml(str) {
     }
     // Normal scoring
     scores[ik] = val;
-    // Auto-highlight this section as modified + record editing date
+    // Auto-highlight this section as modified + record editing date & inspector
     highlightedSections[secKey] = 'new';
     sectionDates[secKey] = meta.dates || new Date().toLocaleDateString('ar-EG', { year:'numeric', month:'2-digit', day:'2-digit' });
+    sectionInspectors[secKey] = meta.inspectors || '';
     const row = document.getElementById(`irow-${ik}`);
     if (row) {
         // Fix: Properly manage classes
@@ -7014,6 +7021,7 @@ function setNote(ik, val) {
     if (secKey) {
         highlightedSections[secKey] = 'new';
         sectionDates[secKey] = meta.dates || new Date().toLocaleDateString('ar-EG', { year:'numeric', month:'2-digit', day:'2-digit' });
+        sectionInspectors[secKey] = meta.inspectors || '';
         updateNavItem(secKey);
     }
     debounceSave();
@@ -7826,23 +7834,52 @@ function forceRecalculation(workbookXml) {
         } catch(e) { return { stylesXml, styleIdx: -1 }; }
     }
 
-    // ── Helper: write a string value into cell B{row} in the sheet ──
-    function patchBCell(sheetXml, row, textValue) {
+    // ── Helper: write a string value into any single-letter column cell, respecting column order ──
+    // Safer than blind prepend-to-row: prevents the "repaired file" corruption seen with out-of-order cells.
+    function patchCellOrdered(sheetXml, row, colLetter, textValue) {
         if (!textValue) return sheetXml;
-        const cellRef = 'B' + row;
-        // Remove existing B cell if present
-        sheetXml = sheetXml.replace(
-            new RegExp(`<c r="${cellRef}"[^>]*(?:/>|>[\\s\\S]*?</c>)`), ''
-        );
-        // Inline string cell
-        const newCell = `<c r="${cellRef}" t="inlineStr"><is><t>${textValue}</t></is></c>`;
-        // Insert into the row before </row>
+        const cellRef = colLetter + row;
+        // Case 1: cell already exists — replace in place, preserving any style attr
+        const ci = sheetXml.indexOf(`r="${cellRef}"`);
+        if (ci !== -1) {
+            const cs = sheetXml.lastIndexOf('<c ', ci);
+            if (cs === -1) return sheetXml;
+            const tagEnd = sheetXml.indexOf('>', cs);
+            if (tagEnd === -1) return sheetXml;
+            const oldTag = sheetXml.slice(cs, tagEnd + 1);
+            const sMatch = oldTag.match(/ s="(\d+)"/);
+            const styleAttr = sMatch ? ` s="${sMatch[1]}"` : '';
+            const newCell = `<c r="${cellRef}"${styleAttr} t="inlineStr"><is><t>${textValue}</t></is></c>`;
+            if (sheetXml[tagEnd - 1] === '/') {
+                // self-closing
+                return sheetXml.slice(0, cs) + newCell + sheetXml.slice(tagEnd + 1);
+            } else {
+                const ce = sheetXml.indexOf('</c>', tagEnd);
+                if (ce === -1) return sheetXml;
+                return sheetXml.slice(0, cs) + newCell + sheetXml.slice(ce + 4);
+            }
+        }
+        // Case 2: cell doesn't exist — insert it in correct column order within the row
         const rowPat = new RegExp(`(<row r="${row}"[^>]*>)([\\s\\S]*?)(</row>)`);
         const rm = sheetXml.match(rowPat);
-        if (rm) {
-            sheetXml = sheetXml.replace(rowPat, `${rm[1]}${newCell}${rm[2]}${rm[3]}`);
+        if (!rm) return sheetXml;
+        const [, rowOpen, rowBody, rowClose] = rm;
+        const newCellXml = `<c r="${cellRef}" t="inlineStr"><is><t>${textValue}</t></is></c>`;
+        const cellMatches = [...rowBody.matchAll(/<c r="([A-Z]+)\d+"[^>]*?(?:\/>|>[\s\S]*?<\/c>)/g)];
+        let insertPos = rowBody.length; // default: append at end
+        for (const m of cellMatches) {
+            const col = m[1];
+            // Compare columns: longer letter-string always "greater" (e.g. AA > Z); else lexicographic
+            const greater = col.length > colLetter.length || (col.length === colLetter.length && col > colLetter);
+            if (greater) { insertPos = m.index; break; }
         }
-        return sheetXml;
+        const newRowBody = rowBody.slice(0, insertPos) + newCellXml + rowBody.slice(insertPos);
+        return sheetXml.replace(rowPat, rowOpen + newRowBody + rowClose);
+    }
+
+    // ── Helper: write a string value into cell B{row} in the sheet (kept for backward compatibility) ──
+    function patchBCell(sheetXml, row, textValue) {
+        return patchCellOrdered(sheetXml, row, 'B', textValue);
     }
 
 	async function exportExcel() {
@@ -7929,25 +7966,28 @@ function forceRecalculation(workbookXml) {
 
                             let ijmaliSheet = new TextDecoder('utf-8').decode(files[ijmaliPath]);
 
-                            // 'new' → yellow D + date in B
+                            // 'new' → yellow D + date in B + inspector name in A
                             if (yellowStyleIdx >= 0) {
                                 newKeys.forEach(secKey => {
                                     const dRow = sectionDRowMap[secKey];
                                     if (dRow !== undefined) {
                                         ijmaliSheet = applyStyleToDCell(ijmaliSheet, dRow, yellowStyleIdx);
-                                        if (meta.dates) ijmaliSheet = patchBCell(ijmaliSheet, dRow, meta.dates);
+                                        if (meta.dates) ijmaliSheet = patchCellOrdered(ijmaliSheet, dRow, 'B', meta.dates);
+                                        if (meta.inspectors) ijmaliSheet = patchCellOrdered(ijmaliSheet, dRow, 'A', meta.inspectors);
                                     }
                                 });
                             }
 
-                            // 'imported' → white D (reset), write stored editing date to B
+                            // 'imported' → white D (reset), write stored editing date to B + stored inspector to A
                             if (whiteStyleIdx >= 0) {
                                 importedKeys.forEach(secKey => {
                                     const dRow = sectionDRowMap[secKey];
                                     if (dRow !== undefined) {
                                         ijmaliSheet = applyStyleToDCell(ijmaliSheet, dRow, whiteStyleIdx);
                                         const storedDate = sectionDates[secKey];
-                                        if (storedDate) ijmaliSheet = patchBCell(ijmaliSheet, dRow, storedDate);
+                                        const storedInspector = sectionInspectors[secKey];
+                                        if (storedDate) ijmaliSheet = patchCellOrdered(ijmaliSheet, dRow, 'B', storedDate);
+                                        if (storedInspector) ijmaliSheet = patchCellOrdered(ijmaliSheet, dRow, 'A', storedInspector);
                                     }
                                 });
                             }
@@ -8205,7 +8245,7 @@ sec.subsections.forEach(sub => {
         function debounceSave() { clearTimeout(saveTimer); saveTimer = setTimeout(saveToLocal, 800); }
         function saveToLocal() {
             try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify({ scores, notes, meta, highlightedSections, sectionDates, savedAt: new Date().toISOString() }));
+                localStorage.setItem(STORAGE_KEY, JSON.stringify({ scores, notes, meta, highlightedSections, sectionDates, sectionInspectors, savedAt: new Date().toISOString() }));
                 showToast('✓ تم الحفظ');
             } catch (e) { showToast('تعذر الحفظ'); }
         }
@@ -8218,6 +8258,7 @@ sec.subsections.forEach(sub => {
             meta = { ...meta, ...(d.meta || {}) };
             highlightedSections = d.highlightedSections || {};
             sectionDates = d.sectionDates || {};
+            sectionInspectors = d.sectionInspectors || {};
             
             updateMetaResult();
             buildSidebarNav();
@@ -8237,7 +8278,7 @@ sec.subsections.forEach(sub => {
 }
         function confirmClear() {
             openModal('مسح جميع البيانات', 'هل أنت متأكد؟ سيتم حذف جميع التقييمات والملاحظات.', () => {
-                scores = {}; notes = {}; meta = { hospital: '', hospitalName: '', type: '', governorate: 'الاسكندرية', inspectors: '', dates: '', result: '' }; highlightedSections = {}; sectionDates = {};
+                scores = {}; notes = {}; meta = { hospital: '', hospitalName: '', type: '', governorate: 'الاسكندرية', inspectors: '', dates: '', result: '' }; highlightedSections = {}; sectionDates = {}; sectionInspectors = {};
                 localStorage.removeItem(STORAGE_KEY);
                 buildSidebarNav(); updateProgress(); showHome(); showToast('تم مسح البيانات');
             });
